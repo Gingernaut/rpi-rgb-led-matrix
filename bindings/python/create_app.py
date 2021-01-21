@@ -34,20 +34,19 @@ class DisplayThreadManager:
     def display(self, mode) -> str:
         print("Display() is called in process ", getpid())
 
+        for process in psutil.process_iter():
+            if '--led-gpio-mapping=adafruit-hat' in process.cmdline():
+                print(f"killing {' '.join(process.cmdline())}")
+                process.kill()
+                time.sleep(0.1)
+        
         if self.process and self.process.is_alive():
             print(f"now killing {self.process.pid}")
             self.process.kill()
             time.sleep(0.2)
             self.process.join()
             time.sleep(0.2)
-            
-            for process in psutil.process_iter():
-                if '--led-gpio-mapping=adafruit-hat' in process.cmdline():
-                    print(f"killing {' '.join(process.cmdline())}")
-                    process.kill()
-                    time.sleep(0.1)
-            
-            time.sleep(0.25)
+
 
         script = self.get_script_for_mode(mode)
         self.process = multiprocessing.Process(target = execute_background_script, args=(script,))
