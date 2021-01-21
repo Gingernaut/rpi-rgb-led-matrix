@@ -1,4 +1,6 @@
 import uvicorn
+# from multiprocessing import Pool, set_start_method
+# set_start_method("spawn")
 
 
 if __name__ == "__main__":

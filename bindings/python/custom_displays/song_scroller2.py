@@ -4,9 +4,9 @@ from samplebase import SampleBase
 from rgbmatrix import graphics
 from PIL import Image
 
-class ImageScroller(SampleBase):
+class SongScroller(SampleBase):
     def __init__(self, *args, **kwargs):
-        super(ImageScroller, self).__init__(*args, **kwargs)
+        super(SongScroller, self).__init__(*args, **kwargs)
         self.parser.add_argument("-i", "--image", help="The image to display", default="../../../examples-api-use/runtext.ppm")
         self.parser.add_argument("-a", "--artist", help="The musical artist", default="GAMBINO")
         self.parser.add_argument("-s", "--song", help="The Song", default="3005")
@@ -140,6 +140,6 @@ class ImageScroller(SampleBase):
 #  sudo ./image-scroller.py --chain=4
 # if you have a chain of four
 if __name__ == "__main__":
-    image_scroller = ImageScroller()
-    if (not image_scroller.process()):
-        image_scroller.print_help()
+    song_scroller = SongScroller()
+    if (not song_scroller.process()):
+        song_scroller.print_help()
