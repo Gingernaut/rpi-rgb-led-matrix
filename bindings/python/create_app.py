@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Union
+from typing import Union, List
 import multiprocessing
 from multiprocessing import Pool
 from os import getpid
@@ -19,11 +19,9 @@ class ImageScroller(FileSelection):
     title: str
 
 
-def execute_background_script(script):
+def execute_background_script(script: List[str]):
     print(f"--- {getpid()} executing {script}")
-    arr_script = [x.strip() for x in script.split()]
-    print(arr_script)
-    return subprocess.run(arr_script)
+    return subprocess.run(script)
 
 class DisplayThreadManager:
     process = None
@@ -33,7 +31,11 @@ class DisplayThreadManager:
 
     def display(self, mode) -> str:
         print("Display() is called in process ", getpid())
-
+        if self.process and self.process.is_alive():
+            print(f"now killing {self.process.pid}")
+            self.process.terminate()
+            time.sleep(0.1)
+        
         for process in psutil.process_iter():
             if '--led-gpio-mapping=adafruit-hat' in process.cmdline():
                 print(f"terminating {' '.join(process.cmdline())}")
@@ -42,12 +44,6 @@ class DisplayThreadManager:
         
         # TODO: clean up any tmp media directory
         
-        if self.process and self.process.is_alive():
-            print(f"now killing {self.process.pid}")
-            self.process.terminate()
-            time.sleep(0.2)
-            self.process.join()
-            time.sleep(0.2)
 
 
         script = self.get_script_for_mode(mode)
@@ -55,35 +51,41 @@ class DisplayThreadManager:
         self.process.daemon = False
         self.process.start()
 
-
         print("started process")
 
-        return script
+        return " ".join(script)
 
 
-    def get_script_args_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> str:
+    def get_script_args_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> List[str]:
         if isinstance(mode, ImageScroller):
-            return (
-                " -i "
-                + f"./custom_displays/{mode.image_path}"
-                + " -a "
-                + f"{mode.artist}"
-                + " -s "
-                + f"{mode.title}"
-            )
+            return [
+                "-i",
+                f"./custom_displays/{mode.image_path}",
+                "-a",
+                f"{mode.artist}",
+                "-s",
+                f"{mode.title}",
+            ]
 
-        return ""
+        return []
 
 
-    def get_script_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> str:
+    def get_script_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> List[str]:
         # base_script = str(
         #     f"sudo python3 custom_displays/{mode.python_file}.py --led-rows 32 --led-cols 64 --led-gpio-mapping=adafruit-hat --led-show-refresh --led-slowdown-gpio=3 "
         # )
-        base_script = str(
-            f"sudo python3 custom_displays/{mode.python_file}.py --led-rows 32 --led-cols 64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=3 "
-        )
-        script_args = self.get_script_args_for_mode(mode)
-        return str(base_script + " " + script_args).strip().replace("  ", "")
+        base_script = [
+            "sudo",
+            "python3",
+            f"custom_displays/{mode.python_file}.py",
+            "--led-rows",
+            "32",
+            "--led-cols",
+            "64",
+            "--led-gpio-mapping=adafruit-hat",
+            "--led-slowdown-gpio=3",
+        ]
+        return base_script + self.get_script_args_for_mode(mode)
 
 def create_app():
 
