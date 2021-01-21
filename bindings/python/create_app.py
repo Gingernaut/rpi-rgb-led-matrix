@@ -36,7 +36,7 @@ class DisplayThreadManager:
 
         if self.process and self.process.is_alive():
             print(f"now killing {self.process.pid}")
-            self.process.kill()
+            self.process.terminate()
             time.sleep(0.1)
             self.process.join()
             time.sleep(0.1)
