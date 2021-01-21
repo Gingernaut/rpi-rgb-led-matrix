@@ -36,13 +36,15 @@ class DisplayThreadManager:
 
         for process in psutil.process_iter():
             if '--led-gpio-mapping=adafruit-hat' in process.cmdline():
-                print(f"killing {' '.join(process.cmdline())}")
-                process.kill()
+                print(f"terminating {' '.join(process.cmdline())}")
+                process.terminate()
                 time.sleep(0.1)
+        
+        # TODO: clean up any tmp media directory
         
         if self.process and self.process.is_alive():
             print(f"now killing {self.process.pid}")
-            self.process.kill()
+            self.process.terminate()
             time.sleep(0.2)
             self.process.join()
             time.sleep(0.2)
