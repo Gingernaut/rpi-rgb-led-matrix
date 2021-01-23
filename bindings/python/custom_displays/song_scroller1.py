@@ -4,18 +4,32 @@ from samplebase import SampleBase
 from rgbmatrix import graphics
 from PIL import Image
 
+
 class ImageScroller(SampleBase):
     def __init__(self, *args, **kwargs):
         super(ImageScroller, self).__init__(*args, **kwargs)
-        self.parser.add_argument("-i", "--image", help="The image to display", default="../../../examples-api-use/runtext.ppm")
-        self.parser.add_argument("-t", "--text", help="The text to scroll on the RGB LED panel", default="Hello world!")
-        self.parser.add_argument("-d", "--delay", help="how long to pause before scrolling", default=0.035)
-        self.parser.add_argument("-f", "--font", help="which font size to choose", default="5x7")
-
+        self.parser.add_argument(
+            "-i",
+            "--image",
+            help="The image to display",
+            default="../../../examples-api-use/runtext.ppm",
+        )
+        self.parser.add_argument(
+            "-t",
+            "--text",
+            help="The text to scroll on the RGB LED panel",
+            default="Hello world!",
+        )
+        self.parser.add_argument(
+            "-d", "--delay", help="how long to pause before scrolling", default=0.035
+        )
+        self.parser.add_argument(
+            "-f", "--font", help="which font size to choose", default="5x7"
+        )
 
     def run(self):
-        if not 'image' in self.__dict__:
-            self.image = Image.open(self.args.image).convert('RGB')
+        if not "image" in self.__dict__:
+            self.image = Image.open(self.args.image).convert("RGB")
         # print("dimmensions")
         # print(f"matrix: {self.matrix.width}x{self.matrix.height}")
         # print(f"image: {self.image.size}")
@@ -53,13 +67,15 @@ class ImageScroller(SampleBase):
             "clR6x12.bdf",
             "helvR12.bdf",
             "texgyre-27.bdf",
-            "tom-thumb.bdf"
+            "tom-thumb.bdf",
         }
 
         chosen_font = f"{self.args.font}.bdf"
 
         if not chosen_font in font_options:
-            raise Exception(f"Error: invalid font size. Available options: {[x.replace('.bdf', '') for x in font_options]}")
+            raise Exception(
+                f"Error: invalid font size. Available options: {[x.replace('.bdf', '') for x in font_options]}"
+            )
 
         font.LoadFont(f"../../../fonts/{chosen_font}")
 
@@ -77,14 +93,15 @@ class ImageScroller(SampleBase):
 
             for x in range(0, 1):
                 for y in range(double_buffer.height):
-                    double_buffer.SetPixel(x, y, 0,0,0)
+                    double_buffer.SetPixel(x, y, 0, 0, 0)
 
             pos -= 1
-            if (pos + len < 0):
+            if pos + len < 0:
                 pos = double_buffer.width
 
             time.sleep(delay)
             double_buffer = self.matrix.SwapOnVSync(double_buffer)
+
 
 # Main function
 # e.g. call with
@@ -92,5 +109,5 @@ class ImageScroller(SampleBase):
 # if you have a chain of four
 if __name__ == "__main__":
     image_scroller = ImageScroller()
-    if (not image_scroller.process()):
+    if not image_scroller.process():
         image_scroller.print_help()

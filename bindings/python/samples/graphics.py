@@ -22,11 +22,11 @@ class GraphicsTest(SampleBase):
         blue = graphics.Color(0, 0, 255)
         graphics.DrawText(canvas, font, 2, 10, blue, "Text")
 
-        time.sleep(10)   # show display for 10 seconds before exit
+        time.sleep(10)  # show display for 10 seconds before exit
 
 
 # Main function
 if __name__ == "__main__":
     graphics_test = GraphicsTest()
-    if (not graphics_test.process()):
+    if not graphics_test.process():
         graphics_test.print_help()

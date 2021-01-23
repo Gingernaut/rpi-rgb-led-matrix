@@ -35,8 +35,9 @@ class PulsingColors(SampleBase):
             self.offscreen_canvas.Fill(red, green, blue)
             self.offscreen_canvas = self.matrix.SwapOnVSync(self.offscreen_canvas)
 
+
 # Main function
 if __name__ == "__main__":
     pulsing_colors = PulsingColors()
-    if (not pulsing_colors.process()):
+    if not pulsing_colors.process():
         pulsing_colors.print_help()

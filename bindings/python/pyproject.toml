@@ -10,6 +10,8 @@ fastapi = "^0.63.0"
 pydantic = "^1.7.3"
 uvicorn = "^0.13.3"
 psutil = "^5.8.0"
+spotipy = "^2.16.1"
+requests = "^2.25.1"
 
 
 [tool.poetry.dev-dependencies]

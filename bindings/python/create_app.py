@@ -8,6 +8,7 @@ import time
 import subprocess
 import psutil
 
+
 class FileSelection(BaseModel):
     python_file: str
 
@@ -19,9 +20,14 @@ class ImageScroller(FileSelection):
     title: str
 
 
+class DemoProject(BaseModel):
+    demo_title: str
+
+
 def execute_background_script(script: List[str]):
     print(f"--- {getpid()} executing {script}")
     return subprocess.run(script)
+
 
 class DisplayThreadManager:
     process = None
@@ -35,19 +41,19 @@ class DisplayThreadManager:
             print(f"now killing {self.process.pid}")
             self.process.terminate()
             time.sleep(0.1)
-        
+
         for process in psutil.process_iter():
-            if '--led-gpio-mapping=adafruit-hat' in process.cmdline():
+            if "--led-gpio-mapping=adafruit-hat" in process.cmdline():
                 print(f"terminating {' '.join(process.cmdline())}")
                 process.terminate()
                 time.sleep(0.1)
-        
-        # TODO: clean up any tmp media directory
-        
 
+        # TODO: clean up any tmp media directory
 
         script = self.get_script_for_mode(mode)
-        self.process = multiprocessing.Process(target = execute_background_script, args=(script,))
+        self.process = multiprocessing.Process(
+            target=execute_background_script, args=(script,)
+        )
         self.process.daemon = False
         self.process.start()
 
@@ -55,8 +61,21 @@ class DisplayThreadManager:
 
         return " ".join(script)
 
+    def stop(self):
+        if self.process and self.process.is_alive():
+            print(f"now killing {self.process.pid}")
+            self.process.terminate()
+            time.sleep(0.1)
 
-    def get_script_args_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> List[str]:
+        for process in psutil.process_iter():
+            if "--led-gpio-mapping=adafruit-hat" in process.cmdline():
+                print(f"terminating {' '.join(process.cmdline())}")
+                process.terminate()
+                time.sleep(0.1)
+
+    def get_script_args_for_mode(
+        self, mode: Union[FileSelection, ImageScroller, DemoProject]
+    ) -> List[str]:
         if isinstance(mode, ImageScroller):
             return [
                 "-i",
@@ -67,25 +86,45 @@ class DisplayThreadManager:
                 f"{mode.title}",
             ]
 
+        if isinstance(mode, DemoProject):
+            if mode.demo_title == "conway":
+                return ["-D7"]
+            if mode.demo_title == "pulsing_colors":
+                return ["-D4"]
+
         return []
 
+    def get_script_for_mode(
+        self, mode: Union[FileSelection, ImageScroller, DemoProject]
+    ) -> List[str]:
 
-    def get_script_for_mode(self, mode: Union[FileSelection, ImageScroller]) -> List[str]:
-        # base_script = str(
-        #     f"sudo python3 custom_displays/{mode.python_file}.py --led-rows 32 --led-cols 64 --led-gpio-mapping=adafruit-hat --led-show-refresh --led-slowdown-gpio=3 "
-        # )
-        base_script = [
-            "sudo",
-            "python3",
-            f"custom_displays/{mode.python_file}.py",
-            "--led-rows",
-            "32",
-            "--led-cols",
-            "64",
-            "--led-gpio-mapping=adafruit-hat",
-            "--led-slowdown-gpio=3",
-        ]
+        base_script = []
+        if isinstance(mode, DemoProject):
+            base_script += [
+                "sudo",
+                "../../examples-api-use/demo",
+                "--led-rows",
+                "32",
+                "--led-cols",
+                "64",
+                "--led-gpio-mapping=adafruit-hat",
+                "--led-slowdown-gpio=3",
+            ]
+        else:
+            base_script += [
+                "sudo",
+                "python3",
+                f"custom_displays/{mode.python_file}.py",
+                "--led-rows",
+                "32",
+                "--led-cols",
+                "64",
+                "--led-gpio-mapping=adafruit-hat",
+                "--led-slowdown-gpio=3",
+            ]
+
         return base_script + self.get_script_args_for_mode(mode)
+
 
 def create_app():
 
@@ -94,10 +133,16 @@ def create_app():
     pixel_screen = DisplayThreadManager()
 
     @app.post("/display")
-    async def set_display(mode: Union[FileSelection, ImageScroller]):
+    async def set_display(mode: Union[FileSelection, ImageScroller, DemoProject]):
         print(f"serving web request inside {getpid()}")
         script = pixel_screen.display(mode)
         return {"status": f"set mode to {mode}", "script": script}
+
+    @app.delete("/display")
+    async def turnoff_display():
+        print(f"serving web request inside {getpid()}")
+        pixel_screen.stop()
+        return {"status": "turned off display"}
 
     return app
 

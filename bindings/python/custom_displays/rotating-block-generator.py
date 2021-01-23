@@ -55,10 +55,17 @@ class RotatingBlockGenerator(SampleBase):
                     # Our rotate center is always offset by cent_x
                     rot_x, rot_y = rotate(x - cent_x, y - cent_x, sin, cos)
 
-                    if x >= min_display and x < max_display and y >= min_display and y < max_display:
+                    if (
+                        x >= min_display
+                        and x < max_display
+                        and y >= min_display
+                        and y < max_display
+                    ):
                         x_col = col_table[x]
                         y_col = col_table[y]
-                        offset_canvas.SetPixel(rot_x + cent_x, rot_y + cent_y, x_col, 255 - y_col, y_col)
+                        offset_canvas.SetPixel(
+                            rot_x + cent_x, rot_y + cent_y, x_col, 255 - y_col, y_col
+                        )
                     else:
                         offset_canvas.SetPixel(rot_x + cent_x, rot_y + cent_y, 0, 0, 0)
 
@@ -68,5 +75,5 @@ class RotatingBlockGenerator(SampleBase):
 # Main function
 if __name__ == "__main__":
     rotating_block_generator = RotatingBlockGenerator()
-    if (not rotating_block_generator.process()):
+    if not rotating_block_generator.process():
         rotating_block_generator.print_help()

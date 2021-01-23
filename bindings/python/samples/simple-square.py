@@ -26,5 +26,5 @@ class SimpleSquare(SampleBase):
 # Main function
 if __name__ == "__main__":
     simple_square = SimpleSquare()
-    if (not simple_square.process()):
+    if not simple_square.process():
         simple_square.print_help()

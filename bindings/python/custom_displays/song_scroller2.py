@@ -4,19 +4,31 @@ from samplebase import SampleBase
 from rgbmatrix import graphics
 from PIL import Image
 
+
 class SongScroller(SampleBase):
     def __init__(self, *args, **kwargs):
         super(SongScroller, self).__init__(*args, **kwargs)
-        self.parser.add_argument("-i", "--image", help="The image to display", default="../../../examples-api-use/runtext.ppm")
-        self.parser.add_argument("-a", "--artist", help="The musical artist", default="GAMBINO")
+        self.parser.add_argument(
+            "-i",
+            "--image",
+            help="The image to display",
+            default="../../../examples-api-use/runtext.ppm",
+        )
+        self.parser.add_argument(
+            "-a", "--artist", help="The musical artist", default="GAMBINO"
+        )
         self.parser.add_argument("-s", "--song", help="The Song", default="3005")
 
-        self.parser.add_argument("-d", "--delay", help="how long to pause before scrolling", default=0.035)
-        self.parser.add_argument("-f", "--font", help="which font size to choose", default="5x8")
+        self.parser.add_argument(
+            "-d", "--delay", help="how long to pause before scrolling", default=0.035
+        )
+        self.parser.add_argument(
+            "-f", "--font", help="which font size to choose", default="5x8"
+        )
 
     def run(self):
-        if not 'image' in self.__dict__:
-            self.image = Image.open(self.args.image).convert('RGB')
+        if not "image" in self.__dict__:
+            self.image = Image.open(self.args.image).convert("RGB")
         # print("dimmensions")
         # print(f"matrix: {self.matrix.width}x{self.matrix.height}")
         # print(f"image: {self.image.size}")
@@ -26,7 +38,6 @@ class SongScroller(SampleBase):
 
         double_buffer = self.matrix.CreateFrameCanvas()
         img_width, img_height = newimg.size
-
 
         font = graphics.Font()
 
@@ -56,9 +67,8 @@ class SongScroller(SampleBase):
             "clR6x12.bdf",
             "helvR12.bdf",
             "texgyre-27.bdf",
-            "tom-thumb.bdf"
+            "tom-thumb.bdf",
         }
-
 
         textColor = graphics.Color(255, 255, 255)
 
@@ -77,7 +87,9 @@ class SongScroller(SampleBase):
         chosen_font = f"{self.args.font}.bdf"
 
         if not chosen_font in font_options:
-            raise Exception(f"Error: invalid font size. Available options: {[x.replace('.bdf', '') for x in font_options]}")
+            raise Exception(
+                f"Error: invalid font size. Available options: {[x.replace('.bdf', '') for x in font_options]}"
+            )
 
         if combine_text:
             chosen_font = "6x9.bdf"
@@ -88,15 +100,21 @@ class SongScroller(SampleBase):
         while True:
             double_buffer.Clear()
 
-
             if combine_text:
                 vertical_offset = 18
 
                 combined_text = f"{artist} - {song}"
-                i = graphics.DrawText(double_buffer, font, scroll_text_start_x, vertical_offset, textColor, combined_text)
+                i = graphics.DrawText(
+                    double_buffer,
+                    font,
+                    scroll_text_start_x,
+                    vertical_offset,
+                    textColor,
+                    combined_text,
+                )
 
                 scroll_text_start_x -= 1
-                if (scroll_text_start_x + i < 0):
+                if scroll_text_start_x + i < 0:
                     scroll_text_start_x = double_buffer.width
             else:
                 artist_vertical_offset = 12
@@ -105,23 +123,42 @@ class SongScroller(SampleBase):
                 artist_start_pos = 32
 
                 if len(artist) == 6:
-                    artist_start_pos +=1
+                    artist_start_pos += 1
                 else:
                     artist_start_pos += int(24 / len(artist))
 
                 # artist
-                i = graphics.DrawText(double_buffer, font, artist_start_pos, artist_vertical_offset, textColor, artist)
-
+                i = graphics.DrawText(
+                    double_buffer,
+                    font,
+                    artist_start_pos,
+                    artist_vertical_offset,
+                    textColor,
+                    artist,
+                )
 
                 if not scroll_title:
-                    i = graphics.DrawText(double_buffer, font, artist_start_pos, song_vertical_offset, textColor, song)
+                    i = graphics.DrawText(
+                        double_buffer,
+                        font,
+                        artist_start_pos,
+                        song_vertical_offset,
+                        textColor,
+                        song,
+                    )
                 else:
-                    s = graphics.DrawText(double_buffer, font, scroll_text_start_x, song_vertical_offset, textColor, song)
+                    s = graphics.DrawText(
+                        double_buffer,
+                        font,
+                        scroll_text_start_x,
+                        song_vertical_offset,
+                        textColor,
+                        song,
+                    )
 
                     scroll_text_start_x -= 1
-                    if (scroll_text_start_x + s < 0):
+                    if scroll_text_start_x + s < 0:
                         scroll_text_start_x = double_buffer.width
-
 
             # Image
             double_buffer.SetImage(newimg, 1, 1)
@@ -129,11 +166,11 @@ class SongScroller(SampleBase):
             # left border
             for x in range(0, 1):
                 for y in range(double_buffer.height):
-                    double_buffer.SetPixel(x, y, 0,0,0)
-
+                    double_buffer.SetPixel(x, y, 0, 0, 0)
 
             time.sleep(delay)
             double_buffer = self.matrix.SwapOnVSync(double_buffer)
+
 
 # Main function
 # e.g. call with
@@ -141,5 +178,5 @@ class SongScroller(SampleBase):
 # if you have a chain of four
 if __name__ == "__main__":
     song_scroller = SongScroller()
-    if (not song_scroller.process()):
+    if not song_scroller.process():
         song_scroller.print_help()

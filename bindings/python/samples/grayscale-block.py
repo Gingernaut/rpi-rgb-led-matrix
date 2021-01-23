@@ -35,5 +35,5 @@ class GrayscaleBlock(SampleBase):
 # Main function
 if __name__ == "__main__":
     grayscale_block = GrayscaleBlock()
-    if (not grayscale_block.process()):
+    if not grayscale_block.process():
         grayscale_block.print_help()

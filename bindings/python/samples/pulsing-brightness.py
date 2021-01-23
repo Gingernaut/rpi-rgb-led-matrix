@@ -11,7 +11,7 @@ class GrayscaleBlock(SampleBase):
         count = 0
         c = 255
 
-        while (True):
+        while True:
             if self.matrix.brightness < 1:
                 self.matrix.brightness = max_brightness
                 count += 1
@@ -29,8 +29,9 @@ class GrayscaleBlock(SampleBase):
 
             self.usleep(20 * 1000)
 
+
 # Main function
 if __name__ == "__main__":
     grayscale_block = GrayscaleBlock()
-    if (not grayscale_block.process()):
+    if not grayscale_block.process():
         grayscale_block.print_help()
