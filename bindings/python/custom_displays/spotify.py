@@ -8,9 +8,10 @@ from samplebase import SampleBase
 from rgbmatrix import graphics
 from PIL import Image
 from pprint import pprint
+import os
 
-CLIENT_ID = ""
-CLIENT_SECRET = ""
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = "http://localhost:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
 
@@ -27,15 +28,6 @@ sp = spotipy.Spotify(
 # for idx, item in enumerate(results['items']):
 #     track = item['track']
 #     print(idx, track['artists'][0]['name'], " – ", track['name'])
-
-
-def download_album_art(url: str) -> str:
-    pass
-
-    # To save to a relative path.
-    r = requests.get(url)
-    with open("folder1/folder2/file_name.pdf", "wb") as f:
-        f.write(r.content)
 
 
 class CurrentSong(BaseModel):
@@ -56,6 +48,15 @@ class CurrentSong(BaseModel):
 
     def get_art_filename(self) -> str:
         return f"{self.title.replace(' ','_')}"
+
+    def download_album_art(self) -> str:
+        print(f"downloading album art for {self}")
+        # To save to a relative path.
+        r = requests.get(self.album_cover)
+        filepath = f"media/{self.get_art_filename()}"
+        with open(filepath, "wb") as f:
+            f.write(r.content)
+        return filepath
 
     def __repr__(self):
         return f"{self.artist} - {self.title}"
@@ -86,6 +87,7 @@ class SongScroller(SampleBase):
         scroll_text_start_x = double_buffer.width
         while True:
             # only check current track every 5/10 seconds
+            print("checking spotify for track")
             track = sp.current_user_playing_track()
 
             if track:
@@ -123,7 +125,7 @@ class SongScroller(SampleBase):
             if self.current_song:
 
                 # download album art, if not the
-                img_path = ""
+                img_path = self.current_song.download_album_art()
 
                 image = Image.open(img_path).convert("RGB")
                 img_size = self.matrix.height - 2
