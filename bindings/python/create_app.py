@@ -37,16 +37,7 @@ class DisplayThreadManager:
 
     def display(self, mode) -> str:
         print("Display() is called in process ", getpid())
-        if self.process and self.process.is_alive():
-            print(f"now killing {self.process.pid}")
-            self.process.terminate()
-            time.sleep(0.1)
-
-        for process in psutil.process_iter():
-            if "--led-gpio-mapping=adafruit-hat" in process.cmdline():
-                print(f"terminating {' '.join(process.cmdline())}")
-                process.terminate()
-                time.sleep(0.1)
+        self.stop()
 
         # TODO: clean up any tmp media directory
 
@@ -141,7 +132,8 @@ def create_app():
     @app.delete("/display")
     async def turnoff_display():
         print(f"serving web request inside {getpid()}")
-        pixel_screen.stop()
+        blank_mode = FileSelection(python_file="blank")
+        pixel_screen.display(blank_mode)
         return {"status": "turned off display"}
 
     return app

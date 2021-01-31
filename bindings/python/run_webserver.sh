@@ -1,0 +1,1 @@
+GUNICORN_CMD_ARGS="--bind=127.0.0.1:8000 --workers=1 --max-requests-jitter 10" gunicorn "create_app:app"
