@@ -12,6 +12,13 @@ import psutil
 class FileSelection(BaseModel):
     python_file: str
 
+class CustomText(BaseModel):
+    python_file: str = "runtext"
+    text: str
+    size: str = "medium"
+    speed: str = "slow"
+    color: str = "white"
+
 
 class ImageScroller(FileSelection):
     python_file: str = "song_scroller2"
@@ -65,7 +72,7 @@ class DisplayThreadManager:
                 time.sleep(0.1)
 
     def get_script_args_for_mode(
-        self, mode: Union[FileSelection, ImageScroller, DemoProject]
+        self, mode: Union[FileSelection, ImageScroller, DemoProject, CustomText]
     ) -> List[str]:
         if isinstance(mode, ImageScroller):
             return [
@@ -77,6 +84,18 @@ class DisplayThreadManager:
                 f"{mode.title}",
             ]
 
+        if isinstance(mode, CustomText):
+            return [
+                "--text",
+                f"{mode.text}",
+                "--color",
+                f"{mode.color}",
+                "--size",
+                f"{mode.size}",
+                "--speed",
+                f"{mode.speed}",
+            ]
+
         if isinstance(mode, DemoProject):
             if mode.demo_title == "conway":
                 return ["-D7"]
@@ -86,7 +105,7 @@ class DisplayThreadManager:
         return []
 
     def get_script_for_mode(
-        self, mode: Union[FileSelection, ImageScroller, DemoProject]
+        self, mode: Union[FileSelection, ImageScroller, DemoProject, CustomText]
     ) -> List[str]:
 
         base_script = []
@@ -124,7 +143,7 @@ def create_app():
     pixel_screen = DisplayThreadManager()
 
     @app.post("/display")
-    async def set_display(mode: Union[FileSelection, ImageScroller, DemoProject]):
+    async def set_display(mode: Union[FileSelection, ImageScroller, DemoProject, CustomText]):
         print(f"serving web request inside {getpid()}")
         script = pixel_screen.display(mode)
         return {"status": f"set mode to {mode}", "script": script}
