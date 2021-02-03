@@ -12,6 +12,8 @@ uvicorn = "^0.13.3"
 psutil = "^5.8.0"
 spotipy = "^2.16.1"
 requests = "^2.25.1"
+uvloop = "^0.14.0"
+httptools = "^0.1.1"
 
 
 [tool.poetry.dev-dependencies]
