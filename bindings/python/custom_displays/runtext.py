@@ -126,7 +126,9 @@ class RunText(SampleBase):
         print(f"will only sleep for {sleeptime}")
         while True:
             offscreen_canvas.Clear()
-            len = graphics.DrawText(offscreen_canvas, font, pos, vert_offset, textColor, my_text)
+            len = graphics.DrawText(
+                offscreen_canvas, font, pos, vert_offset, textColor, my_text
+            )
             pos -= 1
             if pos + len < 0:
                 pos = offscreen_canvas.width

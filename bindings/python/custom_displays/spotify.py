@@ -10,15 +10,11 @@ from PIL import Image
 from pprint import pprint
 import os
 
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = "http://localhost:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
 
 sp = spotipy.Spotify(
     auth_manager=SpotifyOAuth(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
         redirect_uri=REDIRECT_URI,
         scope=SCOPE,
     )
