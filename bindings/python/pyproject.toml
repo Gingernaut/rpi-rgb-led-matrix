@@ -16,6 +16,7 @@ uvloop = "^0.14.0"
 httptools = "^0.1.1"
 Pillow = "^8.1.0"
 cachetools = "^4.2.1"
+python-dotenv = "^0.15.0"
 
 
 [tool.poetry.dev-dependencies]

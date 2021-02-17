@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-from spotipy.oauth2 import SpotifyClientCredentials
 import requests
 from pydantic import BaseModel
 import time
@@ -12,12 +11,22 @@ from typing import Optional
 from cachetools import cached, TTLCache
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = "http://localhost:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
 
-client_credentials_manager = SpotifyClientCredentials()
-sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
-
+sp = spotipy.Spotify(
+    auth_manager=SpotifyOAuth(
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        scope=SCOPE,
+    )
+)
 # results = sp.current_user_saved_tracks()
 # for idx, item in enumerate(results['items']):
 #     track = item['track']

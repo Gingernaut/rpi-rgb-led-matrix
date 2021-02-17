@@ -123,7 +123,7 @@ class DisplayThreadManager:
         else:
             base_script += [
                 "sudo",
-                "python3",
+                "/led-matrix/bindings/python/.venv/bin/python3",
                 f"custom_displays/{mode.python_file}.py",
                 "--led-rows",
                 "32",

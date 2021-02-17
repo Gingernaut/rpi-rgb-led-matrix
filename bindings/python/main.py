@@ -1,8 +1,7 @@
 import uvicorn
 
-# from multiprocessing import Pool, set_start_method
-# set_start_method("spawn")
-
+from dotenv import load_dotenv
+load_dotenv()
 
 if __name__ == "__main__":
     uvicorn.run(
