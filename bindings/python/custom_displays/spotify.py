@@ -12,6 +12,7 @@ from cachetools import cached, TTLCache
 import os
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -39,7 +40,7 @@ class CurrentSong(BaseModel):
     album_cover: str
 
     def should_combine_text(self) -> bool:
-        return len(self.artist) < 7
+        return len(self.artist) > 6
 
     def should_scroll_title(self) -> bool:
         return len(self.title) > 6
@@ -71,6 +72,8 @@ class CurrentSong(BaseModel):
 class SongScroller(SampleBase):
     current_song = None
 
+    current_album_image = None
+
     @cached(cache=TTLCache(maxsize=1, ttl=5))
     def get_current_playing_song(self) -> Optional[CurrentSong]:
         print("checking spotify for song")
@@ -94,7 +97,7 @@ class SongScroller(SampleBase):
     def __init__(self, *args, **kwargs):
         super(SongScroller, self).__init__(*args, **kwargs)
         self.parser.add_argument(
-            "-d", "--delay", help="how long to pause before scrolling", default=0.01
+            "-d", "--delay", help="how long to pause before scrolling", default=0.035
         )
         self.parser.add_argument(
             "-f", "--font", help="which font size to choose", default="5x8"
@@ -116,31 +119,31 @@ class SongScroller(SampleBase):
             song = self.get_current_playing_song()
 
             if song:
-                if self.current_song and self.current_song == song:
+                if self.current_song == song:
                     print("already have the right song info!")
                 else:
                     print("have new song")
                     self.current_song = song
                     self.current_song.download_album_art()
+
+                    img_path = self.current_song.get_album_art_path()
+                    image = Image.open(img_path).convert("RGB")
+                    img_size = self.matrix.height - 2
+                    self.current_album_image = image.resize(
+                        (img_size, img_size), Image.LANCZOS
+                    )
+
                     chosen_font = f"{song.get_font_size()}.bdf"
                     font.LoadFont(f"../../fonts/{chosen_font}")
 
             else:
                 # show spotify icon?
-                print("no playing song")
+                print("no playing song", end="\r")
                 self.current_song = None
 
             double_buffer.Clear()
 
             if self.current_song:
-
-                # download album art, if not the
-                img_path = self.current_song.get_album_art_path()
-
-                image = Image.open(img_path).convert("RGB")
-                img_size = self.matrix.height - 2
-                newimg = image.resize((img_size, img_size), Image.LANCZOS)
-                # img_width, img_height = newimg.size
 
                 if self.current_song.should_combine_text():
                     vertical_offset = 18
@@ -205,7 +208,7 @@ class SongScroller(SampleBase):
                             scroll_text_start_x = double_buffer.width
 
                 # Image
-                double_buffer.SetImage(newimg, 1, 1)
+                double_buffer.SetImage(self.current_album_image, 1, 1)
 
                 # left border
                 for x in range(0, 1):
