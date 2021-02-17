@@ -10,7 +10,7 @@ from PIL import Image
 from typing import Optional
 from cachetools import cached, TTLCache
 import os
-
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -146,9 +146,11 @@ class SongScroller(SampleBase):
         textColor = graphics.Color(255, 255, 255)
 
         scroll_text_start_x = double_buffer.width
+
+        loop = asyncio.get_event_loop()
         while True:
 
-            self.get_updated_data()
+            asyncio.loop(self.get_updated_data())
 
             double_buffer.Clear()
 
