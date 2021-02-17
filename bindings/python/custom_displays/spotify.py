@@ -71,7 +71,6 @@ class CurrentSong(BaseModel):
 
 class SongScroller(SampleBase):
     current_song = None
-
     current_album_image = None
 
     @cached(cache=TTLCache(maxsize=1, ttl=5))
@@ -105,6 +104,39 @@ class SongScroller(SampleBase):
 
         self.current_song = None
 
+    async def get_updated_data(self):
+        # only check current track every 5/10 seconds
+        song = self.get_current_playing_song()
+
+        if song:
+            if self.current_song == song:
+                print("already have the right song info!", end="\r")
+            else:
+                print("have new song")
+
+                old_art = [f for f in os.listdir("media/") if f.endswith(".png")]
+                for f in old_art:
+                    print(f"deleting {f}")
+                    os.remove(os.path.join("media", f))
+
+                self.current_song = song
+                self.current_song.download_album_art()
+
+                img_path = self.current_song.get_album_art_path()
+                image = Image.open(img_path).convert("RGB")
+                img_size = self.matrix.height - 2
+                self.current_album_image = image.resize(
+                    (img_size, img_size), Image.LANCZOS
+                )
+
+                chosen_font = f"{song.get_font_size()}.bdf"
+                font.LoadFont(f"../../fonts/{chosen_font}")
+
+        else:
+            # show spotify icon?
+            print("no playing song", end="\r")
+            self.current_song = None
+
     def run(self):
 
         double_buffer = self.matrix.CreateFrameCanvas()
@@ -115,39 +147,8 @@ class SongScroller(SampleBase):
 
         scroll_text_start_x = double_buffer.width
         while True:
-            # only check current track every 5/10 seconds
-            song = self.get_current_playing_song()
 
-            if song:
-                if self.current_song == song:
-                    print("already have the right song info!", end="\r")
-                else:
-                    print("have new song")
-
-                    old_art = [ f for f in os.listdir("media/") if f.endswith(".png") ]
-                    for f in old_art:
-                        print(f"deleting {f}")
-                        os.remove(os.path.join("media", f))
-
-
-                    self.current_song = song
-                    self.current_song.download_album_art()
-                    
-
-                    img_path = self.current_song.get_album_art_path()
-                    image = Image.open(img_path).convert("RGB")
-                    img_size = self.matrix.height - 2
-                    self.current_album_image = image.resize(
-                        (img_size, img_size), Image.LANCZOS
-                    )
-
-                    chosen_font = f"{song.get_font_size()}.bdf"
-                    font.LoadFont(f"../../fonts/{chosen_font}")
-
-            else:
-                # show spotify icon?
-                print("no playing song", end="\r")
-                self.current_song = None
+            self.get_updated_data()
 
             double_buffer.Clear()
 
