@@ -15,6 +15,7 @@ requests = "^2.25.1"
 uvloop = "^0.14.0"
 httptools = "^0.1.1"
 Pillow = "^8.1.0"
+cachetools = "^4.2.1"
 
 
 [tool.poetry.dev-dependencies]

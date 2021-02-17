@@ -1,24 +1,22 @@
 #!/usr/bin/env python
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials
 import requests
 from pydantic import BaseModel
 import time
 from samplebase import SampleBase
 from rgbmatrix import graphics
 from PIL import Image
-from pprint import pprint
+from typing import Optional
+from cachetools import cached, TTLCache
 import os
 
 REDIRECT_URI = "http://localhost:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
 
-sp = spotipy.Spotify(
-    auth_manager=SpotifyOAuth(
-        redirect_uri=REDIRECT_URI,
-        scope=SCOPE,
-    )
-)
+client_credentials_manager = SpotifyClientCredentials()
+sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
 # results = sp.current_user_saved_tracks()
 # for idx, item in enumerate(results['items']):
@@ -49,7 +47,7 @@ class CurrentSong(BaseModel):
         print(f"downloading album art for {self}")
         # To save to a relative path.
         r = requests.get(self.album_cover)
-        filepath = f"media/{self.get_art_filename()}"
+        filepath = f"media/{self.get_art_filename()}.png"
         with open(filepath, "wb") as f:
             f.write(r.content)
         return filepath
@@ -60,6 +58,25 @@ class CurrentSong(BaseModel):
 
 class SongScroller(SampleBase):
     current_song = None
+
+    @cached(cache=TTLCache(maxsize=1, ttl=5))
+    def get_current_playing_song(self) -> Optional[CurrentSong]:
+
+        track = sp.current_user_playing_track()
+
+        if track:
+            track = track["item"]
+            artist = track.get("artists")[0]["name"]
+            song_title = track.get("name")
+
+            album = track.get("album")
+            album_art = None
+            if album.get("images") and len(album.get("images")) > 0:
+                album_art = album.get("images")[0]["url"]
+
+            return CurrentSong(artist=artist, title=song_title, album_cover=album_art)
+
+        return None
 
     def __init__(self, *args, **kwargs):
         super(SongScroller, self).__init__(*args, **kwargs)
@@ -84,25 +101,9 @@ class SongScroller(SampleBase):
         while True:
             # only check current track every 5/10 seconds
             print("checking spotify for track")
-            track = sp.current_user_playing_track()
+            song = self.get_current_playing_song()
 
-            if track:
-                track = track["item"]
-                artist = track.get("artists")[0]["name"]
-                song_title = track.get("name")
-
-                album = track.get("album")
-                album_art = None
-                if album.get("images") and len(album.get("images")) > 0:
-                    album_art = album.get("images")[0]["url"]
-
-                song = CurrentSong(
-                    artist=artist, title=song_title, album_cover=album_art
-                )
-
-                print(song)
-                print("******")
-
+            if song:
                 if self.current_song and self.current_song == song:
                     print("already have the right song info!")
                 else:
@@ -113,7 +114,7 @@ class SongScroller(SampleBase):
 
             else:
                 # show spotify icon?
-                print("no playing track")
+                print("no playing song")
                 self.current_song = None
 
             double_buffer.Clear()
