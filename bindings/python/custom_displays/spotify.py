@@ -56,10 +56,13 @@ class CurrentSong(BaseModel):
         print(f"downloading album art for {self}")
         # To save to a relative path.
         r = requests.get(self.album_cover)
-        filepath = f"media/{self.get_art_filename()}.png"
+        filepath = self.get_album_art_path()
         with open(filepath, "wb") as f:
             f.write(r.content)
         return filepath
+
+    def get_album_art_path(self):
+        return f"media/{self.get_art_filename()}.png"
 
     def __repr__(self):
         return f"{self.artist} - {self.title}"
@@ -70,6 +73,7 @@ class SongScroller(SampleBase):
 
     @cached(cache=TTLCache(maxsize=1, ttl=5))
     def get_current_playing_song(self) -> Optional[CurrentSong]:
+        print("checking spotify for song")
 
         track = sp.current_user_playing_track()
 
@@ -90,7 +94,7 @@ class SongScroller(SampleBase):
     def __init__(self, *args, **kwargs):
         super(SongScroller, self).__init__(*args, **kwargs)
         self.parser.add_argument(
-            "-d", "--delay", help="how long to pause before scrolling", default=0.035
+            "-d", "--delay", help="how long to pause before scrolling", default=0.01
         )
         self.parser.add_argument(
             "-f", "--font", help="which font size to choose", default="5x8"
@@ -109,7 +113,6 @@ class SongScroller(SampleBase):
         scroll_text_start_x = double_buffer.width
         while True:
             # only check current track every 5/10 seconds
-            print("checking spotify for track")
             song = self.get_current_playing_song()
 
             if song:
@@ -118,6 +121,7 @@ class SongScroller(SampleBase):
                 else:
                     print("have new song")
                     self.current_song = song
+                    self.current_song.download_album_art()
                     chosen_font = f"{song.get_font_size()}.bdf"
                     font.LoadFont(f"../../fonts/{chosen_font}")
 
@@ -131,7 +135,7 @@ class SongScroller(SampleBase):
             if self.current_song:
 
                 # download album art, if not the
-                img_path = self.current_song.download_album_art()
+                img_path = self.current_song.get_album_art_path()
 
                 image = Image.open(img_path).convert("RGB")
                 img_size = self.matrix.height - 2
@@ -162,10 +166,10 @@ class SongScroller(SampleBase):
 
                     artist_start_pos = 32
 
-                    if len(artist) == 6:
+                    if len(self.current_song.artist) == 6:
                         artist_start_pos += 1
                     else:
-                        artist_start_pos += int(24 / len(artist))
+                        artist_start_pos += int(24 / len(self.current_song.artist))
 
                     # artist
                     i = graphics.DrawText(
