@@ -81,6 +81,7 @@ class SongScroller(SampleBase):
         track = sp.current_user_playing_track()
 
         if track:
+
             track = track["item"]
             artist = track.get("artists")[0]["name"]
             song_title = track.get("name")
@@ -91,7 +92,8 @@ class SongScroller(SampleBase):
                 album_art = album.get("images")[0]["url"]
 
             return CurrentSong(artist=artist, title=song_title, album_cover=album_art)
-
+        else:
+            print("spotify returned no track :(")
         return None
 
     def __init__(self, *args, **kwargs):
