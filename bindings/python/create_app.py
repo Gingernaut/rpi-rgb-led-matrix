@@ -132,6 +132,7 @@ class DisplayThreadManager:
                 "64",
                 "--led-gpio-mapping=adafruit-hat",
                 "--led-slowdown-gpio=3",
+                "--led-show-refresh"
             ]
 
         return base_script + self.get_script_args_for_mode(mode)
