@@ -45,22 +45,13 @@ class RunText(SampleBase):
             default="Hello world!",
         )
         self.parser.add_argument(
-            "-cc",
-            "--color",
-            help="The text color",
-            default="white",
+            "-cc", "--color", help="The text color", default="white",
         )
         self.parser.add_argument(
-            "-s",
-            "--size",
-            help="The Font Size",
-            default="medium",
+            "-s", "--size", help="The Font Size", default="medium",
         )
         self.parser.add_argument(
-            "-sp",
-            "--speed",
-            help="The Speed",
-            default="slow",
+            "-sp", "--speed", help="The Speed", default="slow",
         )
 
     def get_color(self, color_str):

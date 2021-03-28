@@ -105,6 +105,11 @@ class SongScroller(SampleBase):
             "-f", "--font", help="which font size to choose", default="5x8"
         )
 
+        spotify_icon = Image.open("media/spotify.png").convert("RGB")
+
+        spot_size = 30
+        self.spotify_icon = spotify_icon.resize((spot_size, spot_size), Image.LANCZOS)
+
         self.current_song = None
 
     def run(self):
@@ -126,7 +131,11 @@ class SongScroller(SampleBase):
                 else:
                     print("have new song")
 
-                    old_art = [f for f in os.listdir("media/") if f.endswith(".png")]
+                    old_art = [
+                        f
+                        for f in os.listdir("media/")
+                        if f.endswith(".png") and not f.endswith("spotify.png")
+                    ]
                     for f in old_art:
                         print(f"deleting {f}")
                         os.remove(os.path.join("media", f))
@@ -145,13 +154,12 @@ class SongScroller(SampleBase):
                     font.LoadFont(f"../../fonts/{chosen_font}")
 
             else:
-                # show spotify icon?
-                print("no playing song", end="\r")
                 self.current_song = None
-
-            double_buffer.Clear()
+                double_buffer.SetImage(self.spotify_icon, 16, 1)
+                double_buffer = self.matrix.SwapOnVSync(double_buffer)
 
             if self.current_song:
+                double_buffer.Clear()
 
                 if self.current_song.should_combine_text():
                     vertical_offset = 18
@@ -223,8 +231,8 @@ class SongScroller(SampleBase):
                     for y in range(double_buffer.height):
                         double_buffer.SetPixel(x, y, 0, 0, 0)
 
-            time.sleep(delay)
-            double_buffer = self.matrix.SwapOnVSync(double_buffer)
+                time.sleep(delay)
+                double_buffer = self.matrix.SwapOnVSync(double_buffer)
 
 
 # Main function
