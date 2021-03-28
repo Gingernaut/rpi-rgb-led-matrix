@@ -2,7 +2,7 @@
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import requests
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import time
 from samplebase import SampleBase
 from rgbmatrix import graphics
@@ -68,6 +68,12 @@ class CurrentSong(BaseModel):
     def __repr__(self):
         return f"{self.artist} - {self.title}"
 
+    @validator("artist")
+    def rhcp(cls, v):
+        if v.lower().strip() == "red hot chili peppers":
+            return "RHCP"
+        return v
+
 
 class SongScroller(SampleBase):
     current_song = None
@@ -129,8 +135,6 @@ class SongScroller(SampleBase):
                 if self.current_song == song:
                     print("already have the right song info!", end="\r")
                 else:
-                    print("have new song")
-
                     old_art = [
                         f
                         for f in os.listdir("media/")
@@ -154,8 +158,11 @@ class SongScroller(SampleBase):
                     font.LoadFont(f"../../fonts/{chosen_font}")
 
             else:
+                if self.current_song:
+                    double_buffer.Clear()
+
                 self.current_song = None
-                double_buffer.SetImage(self.spotify_icon, 16, 1)
+                double_buffer.SetImage(self.spotify_icon, 1, 1)
                 double_buffer = self.matrix.SwapOnVSync(double_buffer)
 
             if self.current_song:
