@@ -12,6 +12,7 @@ import psutil
 class FileSelection(BaseModel):
     python_file: str
 
+
 class CustomText(BaseModel):
     python_file: str = "runtext"
     text: str
@@ -143,7 +144,9 @@ def create_app():
     pixel_screen = DisplayThreadManager()
 
     @app.post("/display")
-    async def set_display(mode: Union[FileSelection, ImageScroller, DemoProject, CustomText]):
+    async def set_display(
+        mode: Union[FileSelection, ImageScroller, DemoProject, CustomText]
+    ):
         print(f"serving web request inside {getpid()}")
         script = pixel_screen.display(mode)
         return {"status": f"set mode to {mode}", "script": script}

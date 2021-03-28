@@ -126,15 +126,13 @@ class SongScroller(SampleBase):
                 else:
                     print("have new song")
 
-                    old_art = [ f for f in os.listdir("media/") if f.endswith(".png") ]
+                    old_art = [f for f in os.listdir("media/") if f.endswith(".png")]
                     for f in old_art:
                         print(f"deleting {f}")
                         os.remove(os.path.join("media", f))
 
-
                     self.current_song = song
                     self.current_song.download_album_art()
-                    
 
                     img_path = self.current_song.get_album_art_path()
                     image = Image.open(img_path).convert("RGB")
