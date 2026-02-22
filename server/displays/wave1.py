@@ -68,15 +68,16 @@ def _build_pixels(base_rgb: tuple[int, int, int], direction: Direction) -> list[
 
 
 class Meteor:
-    __slots__ = ("base_rgb", "x", "y", "direction", "speed", "pixels", "length")
+    __slots__ = ("base_rgb", "x", "y", "direction", "speed", "accum", "pixels", "length")
 
     def __init__(self, x: int, y: int, direction: Direction,
-                 base_rgb: tuple[int, int, int], speed: int = 1):
+                 base_rgb: tuple[int, int, int], speed: float = 0.5):
         self.base_rgb = base_rgb
         self.x = x
         self.y = y
         self.direction = direction
         self.speed = speed
+        self.accum = 0.0
         self.pixels = _build_pixels(base_rgb, direction)
         self.length = len(self.pixels)
 
@@ -113,7 +114,7 @@ class Wave1Display:
     def new_random_meteor(self, base_hue: float, random_x: bool = False) -> Meteor:
         y = random.randint(0, self.matrix.height - 1)
         go_left = bool(random.getrandbits(1))
-        speed = random.randint(1, 3)
+        speed = random.uniform(0.3, 1.0)
         color = _random_meteor_color(base_hue)
 
         if random_x:
@@ -159,10 +160,14 @@ class Wave1Display:
 
             # Draw meteors into the framebuffer
             for i, meteor in enumerate(meteors):
-                if meteor.direction == Direction.RIGHT:
-                    meteor.x += meteor.speed
-                else:
-                    meteor.x -= meteor.speed
+                meteor.accum += meteor.speed
+                steps = int(meteor.accum)
+                if steps > 0:
+                    meteor.accum -= steps
+                    if meteor.direction == Direction.RIGHT:
+                        meteor.x += steps
+                    else:
+                        meteor.x -= steps
 
                 mx = meteor.x
                 my = meteor.y
