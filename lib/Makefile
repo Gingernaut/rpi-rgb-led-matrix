@@ -3,10 +3,12 @@
 # So
 #   -lrgbmatrix
 ##
+include ../config.mk
+
 OBJECTS=gpio.o led-matrix.o options-initialize.o framebuffer.o \
-        thread.o bdf-font.o graphics.o led-matrix-c.o hardware-mapping.o \
-        pixel-mapper.o multiplex-mappers.o \
-	content-streamer.o
+	thread.o bdf-font.o graphics.o led-matrix-c.o hardware-mapping.o \
+	pixel-mapper.o multiplex-mappers.o \
+	content-streamer.o content-streamer-c.o
 
 TARGET=librgbmatrix
 
@@ -129,6 +131,13 @@ HARDWARE_DESC?=adafruit-hat
 # Flag: --led-limit-refresh
 #DEFINES+=-DFIXED_FRAME_MICROSECONDS=5000
 
+# When limiting refrash rate, a CPU core is busy waiting to get accurate
+# timing. On single board systems, this results in an unresponsive system.
+# By disabling busy waiting, CPU cycles are freed up, leading to a more
+# responsive system at the cost of slightly less accurate frame timing.
+# Flag: --led-no-busy-waiting
+#DEFINES+=-DDISABLE_BUSY_WAITING
+
 # Enable wide 64 bit GPIO offered with the compute module.
 # This will use more memory to internally represent the frame buffer, so
 # caches can't be utilized as much.
@@ -165,7 +174,8 @@ DEFINES+=$(USER_DEFINES)
 
 DEFINES+=-DDEFAULT_HARDWARE='"$(HARDWARE_DESC)"'
 INCDIR=../include
-CFLAGS=-W -Wall -Wextra -Wno-unused-parameter -O3 -g -fPIC $(DEFINES)
+
+CFLAGS=-W -Wall -Wextra -Wno-unused-parameter -O3 $(CPU_ARCH_FLAGS) $(LTO_FLAGS) -g -fPIC $(DEFINES)
 CXXFLAGS=$(CFLAGS) -fno-exceptions -std=c++11
 
 all : $(TARGET).a $(TARGET).so.1
@@ -174,7 +184,7 @@ $(TARGET).a : $(OBJECTS)
 	$(AR) rcs $@ $^
 
 $(TARGET).so.1 : $(OBJECTS)
-	$(CXX) -shared -Wl,-soname,$@ -o $@ $^ -lpthread  -lrt -lm -lpthread
+	$(CXX) -shared $(LTO_FLAGS) -Wl,-soname,$@ -o $@ $^ -lpthread  -lrt -lm -lpthread
 
 led-matrix.o: led-matrix.cc $(INCDIR)/led-matrix.h
 thread.o : thread.cc $(INCDIR)/thread.h
