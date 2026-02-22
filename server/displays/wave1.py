@@ -114,7 +114,7 @@ class Wave1Display:
     def new_random_meteor(self, base_hue: float, random_x: bool = False) -> Meteor:
         y = random.randint(0, self.matrix.height - 1)
         go_left = bool(random.getrandbits(1))
-        speed = random.uniform(0.3, 1.0)
+        speed = random.uniform(0.5, 2)
         color = _random_meteor_color(base_hue)
 
         if random_x:
