@@ -105,12 +105,17 @@ class SpotifyDisplay:
         options.cols = args.cols
         options.hardware_mapping = args.gpio_mapping
         options.brightness = args.brightness
+        options.pwm_lsb_nanoseconds = args.pwm_lsb_nanoseconds
+        options.limit_refresh_rate_hz = args.limit_refresh_rate_hz
         options.drop_privileges = False
-        if args.slowdown_gpio is not None:
-            options.gpio_slowdown = args.slowdown_gpio
+        options.gpio_slowdown = args.slowdown_gpio
 
         self.matrix = rgbmatrix.RGBMatrix(options=options)
         self.font = graphics.Font()
+
+        # Pre-built black image for fast album-region clearing
+        img_size = self.matrix.height - 2
+        self.black_rect = Image.new("RGB", (img_size + 2, self.matrix.height), (0, 0, 0))
 
     @cached(cache=TTLCache(maxsize=1, ttl=5))
     def get_current_song(self) -> CurrentSong | None:
@@ -195,10 +200,7 @@ class SpotifyDisplay:
                             scroll_x = canvas.width
 
                 # Black out the album art region so scrolling text doesn't show through
-                img_size = self.matrix.height - 2
-                for x in range(img_size + 2):
-                    for y in range(canvas.height):
-                        canvas.SetPixel(x, y, 0, 0, 0)
+                canvas.SetImage(self.black_rect, 0, 0)
 
                 # Album art (drawn on top of the blacked-out region)
                 canvas.SetImage(self.current_album_image, 1, 1)
@@ -223,7 +225,9 @@ def main() -> None:
     parser.add_argument("--cols", type=int, default=64)
     parser.add_argument("--gpio-mapping", default="adafruit-hat")
     parser.add_argument("--brightness", type=int, default=50)
-    parser.add_argument("--slowdown-gpio", type=int, default=None)
+    parser.add_argument("--slowdown-gpio", type=int, default=4)
+    parser.add_argument("--pwm-lsb-nanoseconds", type=int, default=300)
+    parser.add_argument("--limit-refresh-rate-hz", type=int, default=150)
     args = parser.parse_args()
 
     display = SpotifyDisplay(args)
