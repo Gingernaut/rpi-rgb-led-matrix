@@ -1,1 +1,0 @@
-GUNICORN_CMD_ARGS="--bind=0.0.0.0:8000 --workers=2 --max-requests-jitter 10 --worker-class uvicorn.workers.UvicornWorker" gunicorn "create_app:app" --daemon

@@ -1,10 +1,9 @@
-# fmt: off
 import argparse
 import time
 import sys
 import os
 
-sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
+sys.path.append(os.path.abspath(os.path.dirname(__file__) + '/..'))
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
 
 
@@ -46,7 +45,7 @@ class SampleBase(object):
         options = RGBMatrixOptions()
 
         if self.args.led_gpio_mapping != None:
-            options.hardware_mapping = self.args.led_gpio_mapping
+          options.hardware_mapping = self.args.led_gpio_mapping
         options.rows = self.args.led_rows
         options.cols = self.args.led_cols
         options.chain_length = self.args.led_chain
@@ -64,7 +63,7 @@ class SampleBase(object):
 
 
         if self.args.led_show_refresh:
-            options.show_refresh_rate = 1
+          options.show_refresh_rate = 1
 
         if self.args.led_slowdown_gpio != None:
             options.gpio_slowdown = self.args.led_slowdown_gpio
@@ -73,7 +72,7 @@ class SampleBase(object):
         if not self.args.drop_privileges:
           options.drop_privileges=False
 
-        self.matrix = RGBMatrix(options=options)
+        self.matrix = RGBMatrix(options = options)
 
         try:
             # Start loop
@@ -84,4 +83,3 @@ class SampleBase(object):
             sys.exit(0)
 
         return True
-# fmt: on
