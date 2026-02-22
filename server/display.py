@@ -1,8 +1,10 @@
-import os
 import signal
 import subprocess
+from pathlib import Path
 
 from server.config import DisplayConfig
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class DisplayManager:
@@ -24,7 +26,7 @@ class DisplayManager:
         """Kill any running display, then start a new one. Returns the new PID."""
         self.stop()
         full_cmd = cmd + self._config.to_args() + (extra_args or [])
-        self._process = subprocess.Popen(full_cmd, cwd=os.path.dirname(__file__) or ".")
+        self._process = subprocess.Popen(full_cmd, cwd=PROJECT_ROOT)
         return self._process.pid
 
     def stop(self) -> None:
