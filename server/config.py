@@ -9,7 +9,7 @@ class DisplayConfig(BaseModel):
     slowdown_gpio: int | None = None
 
     def to_args(self) -> list[str]:
-        """Convert to CLI args understood by rpi-rgb-led-matrix binaries."""
+        """Convert to CLI args for rpi-rgb-led-matrix C binaries (--led-* prefix)."""
         args = [
             f"--led-rows={self.rows}",
             f"--led-cols={self.cols}",
@@ -18,6 +18,18 @@ class DisplayConfig(BaseModel):
         ]
         if self.slowdown_gpio is not None:
             args.append(f"--led-slowdown-gpio={self.slowdown_gpio}")
+        return args
+
+    def to_python_args(self) -> list[str]:
+        """Convert to CLI args for custom Python display scripts."""
+        args = [
+            f"--rows={self.rows}",
+            f"--cols={self.cols}",
+            f"--gpio-mapping={self.gpio_mapping}",
+            f"--brightness={self.brightness}",
+        ]
+        if self.slowdown_gpio is not None:
+            args.append(f"--slowdown-gpio={self.slowdown_gpio}")
         return args
 
 

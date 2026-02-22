@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.129.2",
     "uvicorn[standard]>=0.41.0",
+    "spotipy>=2.24",
+    "Pillow>=10.0",
+    "requests>=2.31",
+    "cachetools>=5.3",
 ]
 
 [build-system]

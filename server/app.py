@@ -1,6 +1,7 @@
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from server.config import config
@@ -36,6 +37,21 @@ def display_demo(req: DemoRequest):
         extra_args=[f"-D{req.demo}"],
     )
     return {"status": "running", "pid": pid, "demo": req.demo}
+
+
+@app.post("/display/spotify")
+def display_spotify():
+    if not os.environ.get("CLIENT_ID") or not os.environ.get("CLIENT_SECRET"):
+        raise HTTPException(status_code=500, detail="CLIENT_ID and CLIENT_SECRET must be set")
+
+    pid = display.start_python(
+        script="server/displays/spotify.py",
+        env={
+            "CLIENT_ID": os.environ["CLIENT_ID"],
+            "CLIENT_SECRET": os.environ["CLIENT_SECRET"],
+        },
+    )
+    return {"status": "running", "pid": pid, "mode": "spotify"}
 
 
 @app.get("/display/status")

@@ -1,5 +1,7 @@
+import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 from server.config import DisplayConfig
@@ -22,11 +24,31 @@ class DisplayManager:
     def current_pid(self) -> int | None:
         return self._process.pid if self.is_running else None
 
-    def start(self, cmd: list[str], extra_args: list[str] | None = None) -> int:
+    def start(
+        self,
+        cmd: list[str],
+        extra_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int:
         """Kill any running display, then start a new one. Returns the new PID."""
         self.stop()
         full_cmd = cmd + self._config.to_args() + (extra_args or [])
-        self._process = subprocess.Popen(full_cmd, cwd=PROJECT_ROOT)
+        proc_env = {**os.environ, **(env or {})}
+        self._process = subprocess.Popen(full_cmd, cwd=PROJECT_ROOT, env=proc_env)
+        return self._process.pid
+
+    def start_python(
+        self,
+        script: str,
+        extra_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int:
+        """Start a Python display script using the current interpreter."""
+        script_path = str(PROJECT_ROOT / script)
+        full_cmd = [sys.executable, script_path] + self._config.to_python_args() + (extra_args or [])
+        self.stop()
+        proc_env = {**os.environ, **(env or {})}
+        self._process = subprocess.Popen(full_cmd, cwd=PROJECT_ROOT, env=proc_env)
         return self._process.pid
 
     def stop(self) -> None:
