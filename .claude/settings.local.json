@@ -12,7 +12,8 @@
       "Bash(chmod +x:*)",
       "Bash(ssh:*)",
       "Bash(curl:*)",
-      "WebFetch(domain:developer.spotify.com)"
+      "WebFetch(domain:developer.spotify.com)",
+      "Bash(ls:*)"
     ]
   }
 }
