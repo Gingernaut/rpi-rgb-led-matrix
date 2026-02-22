@@ -7,6 +7,7 @@ from pathlib import Path
 from server.config import DisplayConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BINDINGS_DIR = str(PROJECT_ROOT / "bindings" / "python")
 
 
 class DisplayManager:
@@ -47,7 +48,11 @@ class DisplayManager:
         script_path = str(PROJECT_ROOT / script)
         full_cmd = [sys.executable, script_path] + self._config.to_python_args() + (extra_args or [])
         self.stop()
-        proc_env = {**os.environ, **(env or {})}
+        # Add rgbmatrix bindings to PYTHONPATH so the C extension is importable
+        python_path = os.environ.get("PYTHONPATH", "")
+        if BINDINGS_DIR not in python_path:
+            python_path = f"{BINDINGS_DIR}:{python_path}" if python_path else BINDINGS_DIR
+        proc_env = {**os.environ, "PYTHONPATH": python_path, **(env or {})}
         self._process = subprocess.Popen(full_cmd, cwd=PROJECT_ROOT, env=proc_env)
         return self._process.pid
 
