@@ -1,13 +1,35 @@
 #!/usr/bin/env python
-# Display a Wave1 with double-buffering.
-from samplebase import SampleBase
-from rgbmatrix import graphics
-import time
-from pydantic import BaseModel
-from typing import Tuple, List
-from cachetools import cached
+"""Meteor wave animation display for the RGB LED matrix.
+
+Renders colored meteors (vertical streaks of light) that travel horizontally
+across the display with gradient trailing effects.
+
+Requires rgbmatrix Python bindings installed (make build-python && make install-python).
+"""
+
+import argparse
 import random
+import signal
+import sys
+import time
 from enum import Enum
+from typing import Tuple, List
+
+from pydantic import BaseModel
+from cachetools import cached
+
+# Lazy import — rgbmatrix only exists on the Pi after make install-python
+rgbmatrix = None
+
+
+def import_rgbmatrix():
+    global rgbmatrix
+    from rgbmatrix import RGBMatrix, RGBMatrixOptions, FrameCanvas
+
+    rgbmatrix = type(sys)("rgbmatrix")
+    rgbmatrix.RGBMatrix = RGBMatrix
+    rgbmatrix.RGBMatrixOptions = RGBMatrixOptions
+    rgbmatrix.FrameCanvas = FrameCanvas
 
 
 class Direction(Enum):
@@ -57,33 +79,15 @@ class Meteor(BaseModel):
 
     @cached(cache={})
     def get_pixels(self) -> List[List[int]]:
-        """
-        Returns 2D array of RGBA colors: Represents the pixels for the meteor.
-        If going to be cut off, return a smaller array.
-        (0, 0, 0)
-        """
+        """Returns 2D array of RGB colors representing the meteor's pixels."""
         base_shape = [
-            [
-                self.dimmed_color(95),
-            ],
-            [
-                self.dimmed_color(90),
-            ],
-            [
-                self.dimmed_color(80),
-            ],
-            [
-                self.dimmed_color(75),
-            ],
-            [
-                self.dimmed_color(70),
-            ],
-            [
-                self.dimmed_color(50),
-            ],
-            [
-                self.dimmed_color(30),
-            ],
+            [self.dimmed_color(95)],
+            [self.dimmed_color(90)],
+            [self.dimmed_color(80)],
+            [self.dimmed_color(75)],
+            [self.dimmed_color(70)],
+            [self.dimmed_color(50)],
+            [self.dimmed_color(30)],
             [self.base_rgb],
         ]
         if self.direction == Direction.RIGHT:
@@ -91,11 +95,10 @@ class Meteor(BaseModel):
         elif self.direction == Direction.LEFT:
             return list(reversed(base_shape))
 
-        raise Exception(f"self direction not set!")
+        raise Exception("self direction not set!")
 
     @property
     def constrained_x_size(self):
-        # TODO: non-quare sizes
         @cached(cache={})
         def size():
             return len(self.get_pixels())
@@ -104,7 +107,6 @@ class Meteor(BaseModel):
 
     @property
     def constrained_y_size(self):
-        # TODO: non-quare sizes
         @cached(cache={})
         def size():
             return len(self.get_pixels()[0])
@@ -112,22 +114,35 @@ class Meteor(BaseModel):
         return size()
 
 
-class Wave1(SampleBase):
-    def new_random_meteor(self) -> Meteor:
-        start_y = random.randint(0, 32)
+class Wave1Display:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.args = args
 
+        import_rgbmatrix()
+        options = rgbmatrix.RGBMatrixOptions()
+        options.rows = args.rows
+        options.cols = args.cols
+        options.hardware_mapping = args.gpio_mapping
+        options.brightness = args.brightness
+        options.pwm_lsb_nanoseconds = args.pwm_lsb_nanoseconds
+        options.limit_refresh_rate_hz = args.limit_refresh_rate_hz
+        options.drop_privileges = False
+        options.gpio_slowdown = args.slowdown_gpio
+
+        self.matrix = rgbmatrix.RGBMatrix(options=options)
+
+    def new_random_meteor(self) -> Meteor:
+        start_y = random.randint(0, self.matrix.height)
         green = random.randint(160, 255)
         blue = random.randint(160, 255)
-        goLeft = bool(random.getrandbits(1))
+        go_left = bool(random.getrandbits(1))
 
-        if goLeft:
-
+        if go_left:
             return Meteor(
-                top_left=(64, start_y),
+                top_left=(self.matrix.width, start_y),
                 direction=Direction.LEFT,
                 base_rgb=(0, green, blue),
             )
-
         else:
             return Meteor(
                 top_left=(-4, start_y),
@@ -135,24 +150,20 @@ class Wave1(SampleBase):
                 base_rgb=(0, green, blue),
             )
 
-    def run(self):
-        double_buffer = self.matrix.CreateFrameCanvas()
-
+    def run(self) -> None:
+        canvas = self.matrix.CreateFrameCanvas()
         delay = 0.02
-
-        meteors = []
-
         met_count = 16
 
-        for i in range(met_count):
-            start_y = random.randint(0, 32)
-            start_x = random.randint(0, 32)
-
+        meteors = []
+        for _ in range(met_count):
+            start_y = random.randint(0, self.matrix.height)
+            start_x = random.randint(0, self.matrix.width // 2)
             green = random.randint(160, 255)
             blue = random.randint(160, 255)
-            goLeft = bool(random.getrandbits(1))
+            go_left = bool(random.getrandbits(1))
 
-            if goLeft:
+            if go_left:
                 meteors.append(
                     Meteor(
                         top_left=(start_x, start_y),
@@ -160,7 +171,6 @@ class Wave1(SampleBase):
                         base_rgb=(0, green, blue),
                     )
                 )
-
             else:
                 meteors.append(
                     Meteor(
@@ -169,16 +179,13 @@ class Wave1(SampleBase):
                         base_rgb=(0, green, blue),
                     )
                 )
+
         while True:
-
-            # comment to do streaks
-            double_buffer.Fill(0, 0, 0)
-
+            canvas.Fill(0, 0, 0)
             tmp_meteors = []
 
             for meteor in meteors:
-
-                destroyAfterwards = False
+                destroy = False
 
                 if meteor.direction == Direction.RIGHT:
                     meteor.move_right()
@@ -188,7 +195,6 @@ class Wave1(SampleBase):
                 pixels = meteor.get_pixels()
                 for x in range(meteor.constrained_x_size):
                     for y in range(meteor.constrained_y_size):
-
                         R = pixels[x][y][0]
                         G = pixels[x][y][1]
                         B = pixels[x][y][2]
@@ -196,33 +202,58 @@ class Wave1(SampleBase):
                         display_x = x + meteor.x
                         display_y = y + meteor.y
 
-                        double_buffer.SetPixel(display_x, display_y, R, G, B)
+                        canvas.SetPixel(display_x, display_y, R, G, B)
 
                         if (
                             meteor.x >= self.matrix.width
                             and meteor.direction == Direction.RIGHT
                         ):
-                            destroyAfterwards = True
+                            destroy = True
 
                         if (
                             meteor.x <= (0 - meteor.constrained_x_size)
                             and meteor.direction == Direction.LEFT
                         ):
-                            destroyAfterwards = True
+                            destroy = True
 
-                if destroyAfterwards:
+                if destroy:
                     tmp_meteors.append(self.new_random_meteor())
                 else:
                     tmp_meteors.append(meteor)
 
             meteors = tmp_meteors
-
             time.sleep(delay)
-            double_buffer = self.matrix.SwapOnVSync(double_buffer)
+            canvas = self.matrix.SwapOnVSync(canvas)
+
+    def cleanup(self) -> None:
+        pass
 
 
-# Main function
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Wave1 meteor LED matrix display")
+    parser.add_argument("--rows", type=int, default=32)
+    parser.add_argument("--cols", type=int, default=64)
+    parser.add_argument("--gpio-mapping", default="adafruit-hat")
+    parser.add_argument("--brightness", type=int, default=50)
+    parser.add_argument("--slowdown-gpio", type=int, default=4)
+    parser.add_argument("--pwm-lsb-nanoseconds", type=int, default=300)
+    parser.add_argument("--limit-refresh-rate-hz", type=int, default=150)
+    args = parser.parse_args()
+
+    display = Wave1Display(args)
+
+    def handle_signal(signum, frame):
+        display.cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    try:
+        display.run()
+    finally:
+        display.cleanup()
+
+
 if __name__ == "__main__":
-    wave = Wave1()
-    if not wave.process():
-        wave.print_help()
+    main()

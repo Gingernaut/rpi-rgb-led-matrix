@@ -54,6 +54,12 @@ def display_spotify():
     return {"status": "running", "pid": pid, "mode": "spotify"}
 
 
+@app.post("/display/wave1")
+def display_wave1():
+    pid = display.start_python(script="server/displays/wave1.py")
+    return {"status": "running", "pid": pid, "mode": "wave1"}
+
+
 @app.get("/display/status")
 def display_status():
     return {
