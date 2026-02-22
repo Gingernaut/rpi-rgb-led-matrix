@@ -194,12 +194,14 @@ class SpotifyDisplay:
                         if scroll_x + text_len < 0:
                             scroll_x = canvas.width
 
-                # Album art
-                canvas.SetImage(self.current_album_image, 1, 1)
+                # Black out the album art region so scrolling text doesn't show through
+                img_size = self.matrix.height - 2
+                for x in range(img_size + 2):
+                    for y in range(canvas.height):
+                        canvas.SetPixel(x, y, 0, 0, 0)
 
-                # Black out column 0 so scrolling text doesn't wrap under the image
-                for y in range(canvas.height):
-                    canvas.SetPixel(0, y, 0, 0, 0)
+                # Album art (drawn on top of the blacked-out region)
+                canvas.SetImage(self.current_album_image, 1, 1)
 
             else:
                 # No song playing — show Spotify logo
