@@ -66,7 +66,7 @@ function main() {
     done
 
     if [[ "${USE_SUDO}" -eq 1 ]]; then
-        exec sudo uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+        exec sudo --preserve-env uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     else
         exec uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     fi
