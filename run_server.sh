@@ -13,12 +13,14 @@ if [[ "${1-}" =~ ^-*h(elp)?$ ]]; then
 
 Description:
     Start the Pixel Display API server (FastAPI + uvicorn).
+    Runs with sudo for GPIO access and realtime thread priority.
 
 Options:
     -h, --help          Show this help message and exit
     --host <host>       Bind address (default: "0.0.0.0")
     --port <port>       Bind port (default: 8000)
     --reload            Enable auto-reload for development
+    --no-sudo           Run without sudo (colors will be degraded)
 
 Environment Variables:
     TRACE=1             Enable debug tracing
@@ -26,7 +28,7 @@ Environment Variables:
 Examples:
     ./run_server.sh
     ./run_server.sh --port 3000
-    ./run_server.sh --reload
+    ./run_server.sh --no-sudo --reload
 '
     exit 0
 fi
@@ -37,6 +39,7 @@ function main() {
     HOST="0.0.0.0"
     PORT="8000"
     RELOAD=""
+    USE_SUDO=1
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -52,13 +55,21 @@ function main() {
                 RELOAD="--reload"
                 shift
                 ;;
+            --no-sudo)
+                USE_SUDO=0
+                shift
+                ;;
             *)
                 shift
                 ;;
         esac
     done
 
-    exec uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+    if [[ "${USE_SUDO}" -eq 1 ]]; then
+        exec sudo uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+    else
+        exec uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+    fi
 }
 
 main "$@"
