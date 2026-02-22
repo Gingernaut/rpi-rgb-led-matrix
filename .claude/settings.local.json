@@ -6,7 +6,10 @@
       "Bash(find:*)",
       "Bash(head:*)",
       "Bash(grep:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(chmod +x:*)"
     ]
   }
 }
