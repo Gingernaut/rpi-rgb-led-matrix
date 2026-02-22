@@ -13,10 +13,6 @@ import signal
 import sys
 import time
 from enum import Enum
-from typing import Tuple, List
-
-from pydantic import BaseModel
-from cachetools import cached
 
 # Lazy import — rgbmatrix only exists on the Pi after make install-python
 rgbmatrix = None
@@ -37,81 +33,34 @@ class Direction(Enum):
     RIGHT = "RIGHT"
 
 
-class Meteor(BaseModel):
-    base_rgb: Tuple[int, int, int]
-    top_left: Tuple[int, int]
-    direction: Direction
+DIMMED_PCTS = [95, 90, 80, 75, 70, 50, 30, 0]
 
-    def __hash__(self):
-        return hash((self.base_rgb, self.top_left, str(self.direction)))
 
-    @property
-    def x(self):
-        return self.top_left[0]
+def _build_pixels(base_rgb: tuple[int, int, int], direction: Direction) -> list[tuple[int, int, int]]:
+    """Pre-compute the pixel strip for a meteor. Returns a flat list of RGB tuples."""
+    pixels = []
+    for pct in DIMMED_PCTS:
+        factor = 1 - pct / 100
+        pixels.append((
+            max(int(base_rgb[0] * factor), 0),
+            max(int(base_rgb[1] * factor), 0),
+            max(int(base_rgb[2] * factor), 0),
+        ))
+    if direction == Direction.LEFT:
+        pixels.reverse()
+    return pixels
 
-    @property
-    def y(self):
-        return self.top_left[1]
 
-    @cached(cache={})
-    def dimmed_color(self, pct: int) -> Tuple[int, int, int]:
-        percent = float(pct / 100)
-        return (
-            max(int(self.base_rgb[0] * (1 - percent)), 0),
-            max(int(self.base_rgb[1] * (1 - percent)), 0),
-            max(int(self.base_rgb[2] * (1 - percent)), 0),
-        )
+class Meteor:
+    __slots__ = ("base_rgb", "x", "y", "direction", "pixels", "length")
 
-    def move_left(self):
-        self.top_left = (self.top_left[0] - 1, self.top_left[1])
-
-    def move_right(self):
-        self.top_left = (self.top_left[0] + 1, self.top_left[1])
-
-    def move_up(self):
-        self.top_left = (self.top_left[0], self.top_left[1] - 1)
-
-    def move_down(self):
-        self.top_left = (self.top_left[0], self.top_left[1] + 1)
-
-    def move_to(self, coords: Tuple[int, int]):
-        self.top_left = coords
-
-    @cached(cache={})
-    def get_pixels(self) -> List[List[int]]:
-        """Returns 2D array of RGB colors representing the meteor's pixels."""
-        base_shape = [
-            [self.dimmed_color(95)],
-            [self.dimmed_color(90)],
-            [self.dimmed_color(80)],
-            [self.dimmed_color(75)],
-            [self.dimmed_color(70)],
-            [self.dimmed_color(50)],
-            [self.dimmed_color(30)],
-            [self.base_rgb],
-        ]
-        if self.direction == Direction.RIGHT:
-            return base_shape
-        elif self.direction == Direction.LEFT:
-            return list(reversed(base_shape))
-
-        raise Exception("self direction not set!")
-
-    @property
-    def constrained_x_size(self):
-        @cached(cache={})
-        def size():
-            return len(self.get_pixels())
-
-        return size()
-
-    @property
-    def constrained_y_size(self):
-        @cached(cache={})
-        def size():
-            return len(self.get_pixels()[0])
-
-        return size()
+    def __init__(self, x: int, y: int, direction: Direction, base_rgb: tuple[int, int, int]):
+        self.base_rgb = base_rgb
+        self.x = x
+        self.y = y
+        self.direction = direction
+        self.pixels = _build_pixels(base_rgb, direction)
+        self.length = len(self.pixels)
 
 
 class Wave1Display:
@@ -131,97 +80,53 @@ class Wave1Display:
 
         self.matrix = rgbmatrix.RGBMatrix(options=options)
 
-    def new_random_meteor(self) -> Meteor:
-        start_y = random.randint(0, self.matrix.height)
+    def new_random_meteor(self, random_x: bool = False) -> Meteor:
+        y = random.randint(0, self.matrix.height - 1)
         green = random.randint(160, 255)
         blue = random.randint(160, 255)
         go_left = bool(random.getrandbits(1))
 
-        if go_left:
-            return Meteor(
-                top_left=(self.matrix.width, start_y),
-                direction=Direction.LEFT,
-                base_rgb=(0, green, blue),
-            )
+        if random_x:
+            x = random.randint(0, self.matrix.width // 2)
+        elif go_left:
+            x = self.matrix.width
         else:
-            return Meteor(
-                top_left=(-4, start_y),
-                direction=Direction.RIGHT,
-                base_rgb=(0, green, blue),
-            )
+            x = -8
+
+        return Meteor(
+            x=x,
+            y=y,
+            direction=Direction.LEFT if go_left else Direction.RIGHT,
+            base_rgb=(0, green, blue),
+        )
 
     def run(self) -> None:
         canvas = self.matrix.CreateFrameCanvas()
         delay = 0.02
         met_count = 16
+        width = self.matrix.width
 
-        meteors = []
-        for _ in range(met_count):
-            start_y = random.randint(0, self.matrix.height)
-            start_x = random.randint(0, self.matrix.width // 2)
-            green = random.randint(160, 255)
-            blue = random.randint(160, 255)
-            go_left = bool(random.getrandbits(1))
-
-            if go_left:
-                meteors.append(
-                    Meteor(
-                        top_left=(start_x, start_y),
-                        direction=Direction.LEFT,
-                        base_rgb=(0, green, blue),
-                    )
-                )
-            else:
-                meteors.append(
-                    Meteor(
-                        top_left=(start_x, start_y),
-                        direction=Direction.RIGHT,
-                        base_rgb=(0, green, blue),
-                    )
-                )
+        meteors = [self.new_random_meteor(random_x=True) for _ in range(met_count)]
 
         while True:
             canvas.Fill(0, 0, 0)
-            tmp_meteors = []
 
-            for meteor in meteors:
-                destroy = False
-
+            for i, meteor in enumerate(meteors):
                 if meteor.direction == Direction.RIGHT:
-                    meteor.move_right()
-                elif meteor.direction == Direction.LEFT:
-                    meteor.move_left()
-
-                pixels = meteor.get_pixels()
-                for x in range(meteor.constrained_x_size):
-                    for y in range(meteor.constrained_y_size):
-                        R = pixels[x][y][0]
-                        G = pixels[x][y][1]
-                        B = pixels[x][y][2]
-
-                        display_x = x + meteor.x
-                        display_y = y + meteor.y
-
-                        canvas.SetPixel(display_x, display_y, R, G, B)
-
-                        if (
-                            meteor.x >= self.matrix.width
-                            and meteor.direction == Direction.RIGHT
-                        ):
-                            destroy = True
-
-                        if (
-                            meteor.x <= (0 - meteor.constrained_x_size)
-                            and meteor.direction == Direction.LEFT
-                        ):
-                            destroy = True
-
-                if destroy:
-                    tmp_meteors.append(self.new_random_meteor())
+                    meteor.x += 1
                 else:
-                    tmp_meteors.append(meteor)
+                    meteor.x -= 1
 
-            meteors = tmp_meteors
+                mx = meteor.x
+                my = meteor.y
+                for dx, (r, g, b) in enumerate(meteor.pixels):
+                    canvas.SetPixel(mx + dx, my, r, g, b)
+
+                if meteor.direction == Direction.RIGHT and mx >= width:
+                    meteors[i] = self.new_random_meteor()
+                elif meteor.direction == Direction.LEFT and mx + meteor.length <= 0:
+                    meteors[i] = self.new_random_meteor()
+
             time.sleep(delay)
             canvas = self.matrix.SwapOnVSync(canvas)
 
