@@ -5,7 +5,7 @@ class DisplayConfig(BaseModel):
     rows: int = 32
     cols: int = 64
     gpio_mapping: str = "adafruit-hat"
-    brightness: int = 50
+    brightness: int = 100
     slowdown_gpio: int | None = None
 
     def to_args(self) -> list[str]:

@@ -9,7 +9,10 @@
       "Bash(test:*)",
       "Bash(uv sync:*)",
       "Bash(uv run:*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(ssh:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:developer.spotify.com)"
     ]
   }
 }
