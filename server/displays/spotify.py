@@ -27,6 +27,7 @@ from cachetools import cached, TTLCache
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
 FONTS_DIR = PROJECT_ROOT / "fonts"
+SPOTIFY_TOKEN_CACHE = PROJECT_ROOT / ".spotify_cache"
 
 # Lazy import — rgbmatrix only exists on the Pi after make install-python
 rgbmatrix = None
@@ -86,8 +87,10 @@ class SpotifyDisplay:
             auth_manager=SpotifyOAuth(
                 client_id=os.environ["CLIENT_ID"],
                 client_secret=os.environ["CLIENT_SECRET"],
-                redirect_uri="http://localhost:8888/callback/",
+                redirect_uri="http://127.0.0.1:8888/callback/",
                 scope="user-read-currently-playing user-library-read",
+                cache_path=str(SPOTIFY_TOKEN_CACHE),
+                open_browser=False,
             )
         )
 
