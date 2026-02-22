@@ -105,6 +105,7 @@ class SpotifyDisplay:
         options.cols = args.cols
         options.hardware_mapping = args.gpio_mapping
         options.brightness = args.brightness
+        options.drop_privileges = False
         if args.slowdown_gpio is not None:
             options.gpio_slowdown = args.slowdown_gpio
 
