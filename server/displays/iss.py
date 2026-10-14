@@ -288,9 +288,11 @@ PATH_STEP = 5
 def find_passes(orbit: Orbit, start: float, days: float = PREDICT_DAYS) -> list[Pass]:
     """Visible passes over the observer from start (including one under way)."""
     passes = []
-    # A day at a time, so the GIL is free between chunks for the frames
-    for day in range(math.ceil(days)):
-        t = start + day * 86400 + np.arange(0, 86400, PREDICT_STEP, dtype=np.float64)
+    # An hour at a time, pausing between, so the frame loop never waits long
+    # for the GIL (SGP4 holds it through each call)
+    for hour in range(math.ceil(days * 24)):
+        time.sleep(0.002)
+        t = start + hour * 3600 + np.arange(0, 3600, PREDICT_STEP, dtype=np.float64)
         visible = orbit.sky(t).visible()
         if not visible.any():
             continue
@@ -299,10 +301,9 @@ def find_passes(orbit: Orbit, start: float, days: float = PREDICT_DAYS) -> list[
         for a, b in zip(bounds[:-1], bounds[1:]):
             if visible[a]:
                 found = refine_pass(orbit, t[a], t[b - 1])
-                # (A pass across midnight shows up in both days)
+                # (A pass across the hour shows up in both hours)
                 if found is not None and not (passes and abs(found.start - passes[-1].start) < 60):
                     passes.append(found)
-        time.sleep(0)
     return passes
 
 
