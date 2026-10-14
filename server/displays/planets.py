@@ -485,13 +485,22 @@ class Planets:
         # float64, as the twinkle's phase grows without bound (see matrix_common)
         self.star_speed = np.random.uniform(0.5, 2.0, len(self.star_index))
         self.star_phase = np.random.uniform(0, 2 * math.pi, len(self.star_index))
+        self.star_visible: np.ndarray | None = None
         self.body = random.randrange(len(BODIES))
         self.show(BODIES[self.body](width, height))
         self.total_frames = 0
 
     def show(self, planet: Planet) -> None:
         self.planet = planet
+        # How much of each star the planet leaves visible. Stars behind the
+        # planet stay hidden through its fades, so it never looks see-through:
+        # those behind the new planet vanish at once (the panel is all but
+        # dark there), while any the old planet hid fade back in (in frame())
         self.star_shown = 1 - planet.occlusion[self.star_index, None]
+        if self.star_visible is None:
+            self.star_visible = self.star_shown.copy()
+        else:
+            self.star_visible = np.minimum(self.star_visible, self.star_shown)
         self.frames = 0  # frames this planet has been shown
 
     def frame(self) -> np.ndarray:
@@ -503,15 +512,17 @@ class Planets:
         self.frames += 1
         self.total_frames += 1
 
+        self.star_visible = np.minimum(self.star_shown, self.star_visible + FRAME_SECONDS / FADE_SECONDS)
         twinkle = 0.7 + 0.3 * np.sin(self.total_frames * FRAME_SECONDS * self.star_speed + self.star_phase)
-        stars = self.star_color * twinkle[:, None]
+        stars = self.star_color * (twinkle[:, None] * self.star_visible)
         out = self.planet.static.copy()
-        out[self.star_index] += stars * self.star_shown
+        out[self.star_index] += stars
         self.planet.draw(out, t)
 
         fade = min(1.0, t / FADE_SECONDS, (PLANET_SECONDS - t) / FADE_SECONDS)
         if fade < 1:
-            # Fade from the bare starfield to the full frame
+            # Fade from the starfield (minus stars behind the planet) to the
+            # full frame
             sky = np.zeros_like(out)
             sky[self.star_index] = stars
             out = sky + (out - sky) * max(fade, 0.0) ** 2
