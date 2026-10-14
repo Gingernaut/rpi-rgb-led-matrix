@@ -8,9 +8,9 @@ Fish are drawn far to near, the far ones hazed toward the water color, some
 seaweed stands in front of them, and the neon tetras swim as a school.
 
 After a few quiet minutes something happens (see EVENTS): a shark cruises
-through and the fish scatter, a whale passes in the distance, a diver visits
-the chest with fish tagging along, food is sprinkled in, or jellyfish drift
-by. Now and then a sea turtle paddles across. To try one out, AQUARIUM_EVENT
+through and the fish scatter, a whale or an old submarine passes in the
+distance, a diver visits the chest with fish tagging along, or jellyfish
+drift by. Now and then a sea turtle paddles across. To try one out, AQUARIUM_EVENT
 shows just that one, a couple of seconds in and then after every
 EVENT_TEST_SECONDS of quiet:
 
@@ -94,7 +94,7 @@ STONE = (95, 95, 100)  # the bubbler's air stone
 
 # Fish behavior around events
 FLEE_SPEED = 3.5  # times cruising speed, bolting from a shark
-SEEK_SPEED = 2.5  # at most this times cruising speed, going after food
+SEEK_SPEED = 2.5  # at most this times cruising speed, going after a goal
 BAIT_BALL = 0.45  # a frightened school closes up to this much of its spacing
 OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
 
@@ -137,22 +137,22 @@ SHARK_PALETTE["T"] = SHARK_PALETTE["D"]
 SHARK_SPEED = 0.26  # pixels per frame
 
 TURTLE_PALETTE = {
-    "S": (140, 112, 50), "H": (80, 58, 24), "R": (200, 180, 110),
-    "K": (150, 178, 115), "E": (10, 15, 5),
+    "S": (80, 170, 70), "H": (40, 112, 45), "R": (215, 205, 125),
+    "K": (150, 215, 130), "E": (10, 10, 10),
 }
-# The domed shell and head, then the flippers for each frame of the stroke
+# The domed shell and a big round head, then the flippers for each frame of
+# the stroke
 TURTLE_BODY = [
-    "......HHHHHHH.......",
-    "....HHSSHSSSHSH.....",
-    "..HSSSHSSSSHSSSH..KK",
-    ".HSSSSHSSSSHSSSSHKKE",
-    "RRRRRRRRRRRRRRRRRKK.",
+    "....HHHHH.....",
+    "..HSSHSSSH.KK.",
+    ".HSSSHSSSHKKEK",
+    "RRRRRRRRRRRKKK",
 ]
 TURTLE_FLIPPERS = [
-    ["..K.........KKKK....", ".K..............KK..", "...................."],  # reaching forward
-    ["..K.........KKK.....", ".K...........KKK....", "...............KK..."],  # pulling down
-    [".K.........KKK......", "K.......KKKK........", "......KK............"],  # swept back
-    ["..K.........KKK.....", ".K.........KKKK.....", "...................."],  # recovering
+    ["..K......KKK..", ".K..........K."],  # reaching forward
+    ["..K......KK...", ".K........KK.."],  # pulling down
+    [".K......KK....", "K......KK....."],  # swept back
+    ["..K......KK...", ".K......KKK..."],  # recovering
 ]
 TURTLE_SPEED = 0.12
 
@@ -186,30 +186,54 @@ DIVER_LOOK_SECONDS = 4.0  # at the open chest
 # Where curious fish keep their mouths, from the diver's middle
 DIVER_FOLLOW_SPOTS = [(-15, -6), (-14, 5), (16, -5), (15, 6), (-21, 0), (22, 1), (2, -9)]
 
-# The whale is drawn from a profile rather than a sprite, being longer than
-# the panel: its half-height at each point from the nose (0) to the fluke (1)
-WHALE_LENGTH = 96
+# The whale is drawn from a profile rather than a sprite, for a smooth round
+# body: its half-height at each point from the nose (0) to the fluke (1)
+WHALE_LENGTH = 44
 WHALE_PROFILE = (
-    [0.0, 0.02, 0.05, 0.1, 0.2, 0.32, 0.45, 0.6, 0.74, 0.84, 0.9, 0.94, 0.975, 1.0],
-    [0.0, 2.2, 3.6, 4.8, 5.8, 6.0, 5.5, 4.3, 2.6, 1.4, 1.0, 2.2, 3.2, 0.5],
+    [0.0, 0.02, 0.06, 0.12, 0.22, 0.35, 0.5, 0.62, 0.72, 0.8, 0.86, 0.92, 0.97, 1.0],
+    [0.0, 2.6, 4.0, 4.8, 5.1, 4.9, 4.0, 3.0, 2.0, 1.3, 1.0, 2.0, 3.0, 0.8],
 )
-WHALE_BACK = (30, 42, 62)  # shading down to WHALE_SIDE
-WHALE_SIDE = (58, 74, 98)
-WHALE_BELLY = (130, 145, 160)
-WHALE_PLEAT = (82, 98, 116)
-WHALE_LINE = (16, 22, 34)  # mouth and eye
-WHALE_KNOB = (100, 116, 136)  # the knobs on its head
-WHALE_FIN = (175, 186, 198)
-WHALE_OPACITY = 0.92  # a little of the water shows through, for distance
-WHALE_SPEED = 0.2
-WHALE_SHADOW = 0.25  # how much it dims the tank, passing right over
+WHALE_HUMP = 0.6  # how much its back arches
+WHALE_SWAY = 2.0  # how far the fluke sweeps up and down
+WHALE_BACK = (40, 72, 125)  # shading down to WHALE_SIDE
+WHALE_SIDE = (75, 110, 165)
+WHALE_BELLY = (175, 200, 220)
+WHALE_PLEAT = (135, 160, 190)
+WHALE_LINE = (15, 22, 40)  # its smile and eye
+WHALE_GLINT = (240, 245, 255)
+WHALE_FIN = (160, 190, 225)
+WHALE_OPACITY = 0.95  # a little of the water shows through, for distance
+WHALE_SPEED = 0.16
+WHALE_SHADOW = 0.12  # how much it dims the tank, passing right over
 
-FOOD = [(230, 120, 40), (200, 60, 40), (220, 180, 90)]
-FOOD_PINCHES = 3
-FOOD_FLAKES = 12  # in each pinch
-FOOD_PINCH_SECONDS = (4.0, 7.0)  # between pinches
-FOOD_CHEW_SECONDS = (0.8, 2.0)  # after each bite
-FOOD_SECONDS = 50.0  # the fish lose interest in what's left after this
+# An old riveted submarine, facing right; frames turn the propeller
+SUB_PALETTE = {
+    "Y": (245, 195, 35), "O": (235, 120, 25), "D": (185, 130, 25), "R": (200, 145, 20),
+    "P": (255, 240, 170), "S": (160, 160, 150), "X": (150, 150, 140), "L": (255, 255, 220),
+}
+SUB_HULL = [
+    "....................SSS.......",
+    "....................S.........",
+    "................OOOOSOO.......",
+    "................YYYYYYY.......",
+    "................YYPYYPY.......",
+    "........YYYYYYYYYYYYYYYYYY....",
+    ".....YYYYYYYYYYYYYYYYYYYYYYY..",
+    "....YYYYPYYYYPYYYYPYYYYPYYYYL.",
+    "...OOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "....YRYYRYYRYYRYYRYYRYYRYYRYY.",
+    ".....DDDDDDDDDDDDDDDDDDDDDDD..",
+    "........DDDDDDDDDDDDDDDDDD....",
+]
+# The tail, drawn over the hull's first three columns: rudder and propeller
+SUB_PROPS = [
+    {6: ".OX", 7: ".OX", 8: "XOO", 9: ".OX", 10: ".OX"},  # blades up and down
+    {7: "XO.", 8: "XXO", 9: "XO."},  # blades edge on
+]
+SUB_LAMP = (29, 7)  # the searchlight, in sprite coordinates
+SUB_SPEED = 0.15
+SUB_BEAM = (170, 150, 25)  # added to the water by the searchlight at full strength
+SUB_BEAM_LENGTH = 26
 
 JELLY_COLORS = [(230, 70, 170), (150, 90, 255), (80, 190, 255), (255, 120, 90)]
 
@@ -259,7 +283,7 @@ class Fish:
     """A fish cruising back and forth, now and then pausing, turning around or
     changing depth. Given a leader, it keeps its place near that fish instead.
     Events can send it fleeing out of view (flee/calm), after a point such as
-    food (goal), or slow it down (pace).
+    a spot by the diver (goal), or slow it down (pace).
 
     depth is 0 (near) to 1 (far): far fish are hazed and swim a little slower."""
 
@@ -428,11 +452,6 @@ class Fish:
         self.goal = None
         self.target_y = self.y
         self.pick_turn()
-
-    def reaches(self, px: float, py: float) -> bool:
-        """Whether (px, py) is at this fish's mouth, in the front of its head."""
-        ahead = (px - (self.x + self.w / 2)) * self.facing
-        return -1 <= ahead <= self.w / 2 + 1.5 and abs(py - (self.y + self.h / 2)) <= self.h / 2 + 0.5
 
     def follow(self) -> None:
         lead = self.leader
@@ -616,8 +635,9 @@ class Shark(Event):
 
 
 class Whale(Event):
-    """A humpback, longer than the tank is wide, glides past in the distance,
-    shading the water as it goes. The fish slow down to watch."""
+    """A little blue whale glides past in the distance, smiling, shading the
+    water as it goes and now and then blowing a bubble. The fish slow down
+    to watch."""
 
     layer = BACK
 
@@ -626,9 +646,10 @@ class Whale(Event):
         self.facing = random.choice((1, -1))
         # The nose starts just out of view
         self.nose = -1.0 if self.facing > 0 else tank.width + 1.0
-        self.y = tank.floor * random.uniform(0.31, 0.42)  # rows 9-12 on a 32-row panel
+        self.y = tank.floor * random.uniform(0.3, 0.45)  # rows 8-12 on a 32-row panel
         self.beat = 0.0
-        self.beat_step = 2 * math.pi / frames_for(5.0)
+        self.beat_step = 2 * math.pi / frames_for(3.5)
+        self.blow = frames_for(random.uniform(2, 4))
         for fish in tank.fish:
             fish.pace = 0.5
 
@@ -641,6 +662,11 @@ class Whale(Event):
         left, right = sorted((self.nose, tail))
         covered = max(0.0, min(right, width) - max(left, 0)) / width
         self.shade = 1 - WHALE_SHADOW * covered
+        # A bubble from the blowhole every few seconds
+        self.blow -= 1
+        if not self.blow:
+            self.blow = frames_for(random.uniform(2, 4))
+            self.tank.bubbles.append(Bubble(self.body_x(0.16), float(self.edges(0.16)[0]) - 1))
         # Until the fluke is out of view
         return (tail <= width) if self.facing > 0 else (tail >= 0)
 
@@ -648,33 +674,44 @@ class Whale(Event):
         for fish in self.tank.fish:
             fish.pace = 1.0
 
+    def edges(self, s):
+        """The top and bottom of the body at s (a number or array) from the
+        nose (0) to the fluke tip (1)."""
+        half = np.interp(s, *WHALE_PROFILE)
+        # The tail sweeps up and down, more toward the fluke
+        sway = WHALE_SWAY * np.clip((s - 0.55) / 0.45, 0, 1) ** 2 * math.sin(self.beat)
+        hump = WHALE_HUMP * np.sin(np.pi * np.clip((s - 0.05) / 0.7, 0, 1))
+        center = self.y + sway
+        return center - half * 0.9 - hump, center + half * 1.1
+
+    def body_x(self, s: float) -> float:
+        return self.nose - s * WHALE_LENGTH * self.facing
+
+    def body_y(self, s: float, v: float) -> float:
+        """The y a fraction v of the way down the body, at s from the nose."""
+        top, bottom = self.edges(s)
+        return float(top + v * (bottom - top))
+
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
-        s = (self.nose - (np.arange(width) + 0.5)) * self.facing / WHALE_LENGTH  # 0 nose, 1 fluke tip
+        s = (self.nose - (np.arange(width) + 0.5)) * self.facing / WHALE_LENGTH
         cols = np.flatnonzero((s >= 0) & (s <= 1))
         if not len(cols):
             return
         s = s[cols]
-        half = np.interp(s, *WHALE_PROFILE)
-        # The tail sweeps up and down, more toward the fluke
-        sway = 2.5 * np.clip((s - 0.55) / 0.45, 0, 1) ** 2 * math.sin(self.beat)
-        center = self.y + sway
-        hump = np.sin(np.pi * np.clip((s - 0.05) / 0.7, 0, 1))  # the arched back
-        dorsal = 1.5 * np.clip(1 - np.abs(s - 0.66) / 0.04, 0, 1)
-        top = center - half * 0.85 - hump - dorsal
-        bottom = center + half * 1.1
+        top, bottom = self.edges(s)
         y = np.arange(height, dtype=np.float32)[:, None] + 0.5
         cover = np.clip(np.minimum(y - top, bottom - y) + 0.5, 0, 1) * WHALE_OPACITY
-        # Dark on top shading lighter down the side; the front of the belly
-        # pale, with pleats down the throat; a long mouth line
+        # Darker on top shading lighter down the side, a pale striped belly,
+        # and a smile curving up toward the eye
         v = (y - top) / np.maximum(bottom - top, 0.1)
         side = np.clip(v * 1.6, 0, 1)[..., None]
         color = np.array(WHALE_BACK, np.float32) * (1 - side) + np.array(WHALE_SIDE, np.float32) * side
-        pale = (v > 0.62) & (s < 0.5)
+        pale = (v > 0.62) & (s < 0.6)
         color[pale] = WHALE_BELLY
         color[pale & (np.arange(height)[:, None] % 2 == 0)] = WHALE_PLEAT
-        mouth = 0.45 + s * 1.1  # curving down toward the eye
-        color[(np.abs(v - mouth) * (bottom - top) < 0.5) & (s > 0.015) & (s < 0.14)] = WHALE_LINE
+        smile = 0.64 - 0.24 * (s / 0.17) ** 2
+        color[(np.abs(v - smile) * (bottom - top) < 0.5) & (s > 0.05) & (s < 0.17)] = WHALE_LINE
 
         view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
         water = view[:, cols].astype(np.float32)
@@ -688,125 +725,77 @@ class Whale(Event):
                 for i in range(3):
                     fb[p + i] = int(fb[p + i] + (color[i] - fb[p + i]) * WHALE_OPACITY)
 
-        def body_y(at: float, v: float) -> float:
-            """The y a fraction v of the way down the body, at at from the nose."""
-            h = float(np.interp(at, *WHALE_PROFILE))
-            top = self.y - h * 0.85 - math.sin(math.pi * min(max((at - 0.05) / 0.7, 0), 1))
-            return top + v * (self.y + h * 1.1 - top)
+        # A big eye with a glint
+        ex, ey = self.body_x(0.24), self.body_y(0.24, 0.36)
+        blend(ex, ey, WHALE_LINE)
+        blend(ex, ey + 1, WHALE_LINE)
+        blend(ex + self.facing, ey, WHALE_GLINT)
 
-        def body_x(at: float) -> float:
-            return self.nose - at * WHALE_LENGTH * self.facing
-
-        # Knobs along the top of the head, and the eye just past the mouth
-        for at in (0.04, 0.07, 0.10):
-            blend(body_x(at), body_y(at, 0.12), WHALE_KNOB)
-        blend(body_x(0.155), body_y(0.155, 0.42), WHALE_LINE)
-
-        # The long pale flipper on the near side, beating slowly: broad at the
-        # root, tapering to the tip
-        root = 0.24
-        rx, ry = body_x(root), body_y(root, 0.8)
-        angle = 0.5 + 0.15 * math.sin(self.beat * 0.8)
+        # A short flipper, paddling slowly
+        rx, ry = self.body_x(0.3), self.body_y(0.3, 0.78)
+        angle = 0.6 + 0.25 * math.sin(self.beat * 0.8)
         dx, dy = -math.cos(angle) * self.facing, math.sin(angle)
-        length = 16
-        for k in range(length):
-            px, py = rx + dx * k, ry + dy * k
-            for i in range(3 if k < 5 else 2 if k < 11 else 1):
-                blend(px, py - i, WHALE_FIN)
+        for k in range(7):
+            for i in range(2 if k < 4 else 1):
+                blend(rx + dx * k, ry + dy * k - i, WHALE_FIN)
 
 
-class Feeding(Event):
-    """Food is sprinkled on the surface a pinch at a time; the flakes float a
-    moment, then sink. The fish rush up and snap them up, pausing to chew
-    after each bite."""
+class Submarine(Event):
+    """An old riveted submarine putters past in the distance, portholes
+    glowing and propeller turning, sweeping its searchlight through the
+    water ahead."""
 
     layer = BACK
-
-    class Flake:
-        __slots__ = ("x", "y", "speed", "color", "wait", "float", "phase")
+    depth = 0.5  # (for its haze)
 
     def __init__(self, tank: "Aquarium") -> None:
         super().__init__(tank)
-        spot = random.uniform(16, tank.width - 16)
-        self.flakes = []
-        sprinkle = 0
-        for _ in range(FOOD_PINCHES):
-            drop = spot + random.uniform(-8, 8)
-            for _ in range(FOOD_FLAKES):
-                f = Feeding.Flake()
-                f.x = drop + random.gauss(0, 3)
-                f.y = 1.0
-                f.speed = random.uniform(0.035, 0.07)
-                f.color = random.choice(FOOD)
-                f.wait = sprinkle + random.randint(0, frames_for(1.5))  # not in yet
-                f.float = random.randint(0, frames_for(2.0))  # on the surface
-                f.phase = random.uniform(0, 2 * math.pi)
-                self.flakes.append(f)
-            sprinkle += frames_for(random.uniform(*FOOD_PINCH_SECONDS))
-        self.chewing: dict[Fish, int] = {}  # frames until each fish bites again
-        self.frames_left = frames_for(FOOD_SECONDS)
+        frames = []
+        for prop in SUB_PROPS:
+            rows = list(SUB_HULL)
+            for row, tail in prop.items():
+                rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row][:len(tail)])) + rows[row][len(tail):]
+            frames.append(rows)
+        self.sprite = Sprite(SUB_PALETTE, frames, self.depth)
+        self.facing = random.choice((1, -1))
+        self.x = -self.sprite.w - 2.0 if self.facing > 0 else tank.width + 2.0
+        self.y0 = tank.floor * random.uniform(0.2, 0.42) - self.sprite.h / 2 + 3
+        self.prop = 0.0
         self.frame_count = 0
 
     def step(self) -> bool:
-        tank = self.tank
         self.frame_count += 1
-        self.frames_left -= 1
-        chewing = self.chewing
-        for fish in list(chewing):
-            chewing[fish] -= 1
-            if not chewing[fish]:
-                del chewing[fish]
-        hungry = [fish for fish in tank.fish if fish not in chewing]
-        kept = []
-        live = []  # in the water
-        for f in self.flakes:
-            if f.wait:
-                f.wait -= 1
-                kept.append(f)
-                continue
-            if f.float:
-                f.float -= 1
-            else:
-                f.y += f.speed
-                f.x += math.sin(self.frame_count * 0.05 + f.phase) * 0.03
-            # Lost in the sand, or eaten if a fish gets its mouth to it
-            if f.y >= tank.sand_top[min(max(round(f.x), 0), tank.width - 1)]:
-                continue
-            eater = next((fish for fish in hungry if fish.reaches(f.x, f.y)), None)
-            if eater:
-                chewing[eater] = frames_for(random.uniform(*FOOD_CHEW_SECONDS))
-                hungry.remove(eater)
-                continue
-            kept.append(f)
-            live.append(f)
-        self.flakes = kept
-        if not self.flakes or not self.frames_left:
-            return False
-        if self.frame_count % 5 == 1:
-            # Each fish goes for the flake nearest its mouth, or swims about
-            # until the next pinch; a chewing one hangs about where it is
-            for fish in self.free_fish():
-                if fish in chewing:
-                    continue
-                mx = fish.x + fish.w / 2 + fish.w / 2 * fish.facing
-                my = fish.y + fish.h / 2
-                f = min(live, key=lambda f: (f.x - mx) ** 2 + 2 * (f.y - my) ** 2, default=None)
-                if f:
-                    fish.goal = (f.x, f.y)
-                elif fish.goal:
-                    fish.release()
-        return True
+        self.x += SUB_SPEED * self.facing
+        self.prop = (self.prop + 0.3) % len(SUB_PROPS)
+        if random.random() < 0.06:
+            # A bubble churned up by the propeller
+            stern = self.sprite.at(self.x, self.facing, (0, 8))
+            self.tank.bubbles.append(Bubble(stern, self.y + 8 + random.uniform(-1, 1)))
+        return -self.sprite.w - 3 < self.x < self.tank.width + 3
 
-    def end(self) -> None:
-        for fish in self.free_fish():
-            if fish.goal:
-                fish.release()
+    @property
+    def y(self) -> float:
+        return self.y0 + 0.8 * math.sin(self.frame_count * FRAME_SECONDS * 0.5)
 
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
-        for f in self.flakes:
-            if not f.wait:
-                put(fb, width, height, round(f.x), round(f.y), f.color)
+        y = round(self.y)
+        # The searchlight: a cone of light from the lamp, sweeping slowly up
+        # and down, fading with distance
+        lx = self.sprite.at(self.x, self.facing, SUB_LAMP) + 0.5
+        ly = y + SUB_LAMP[1] + 0.5
+        ahead = (np.arange(width) + 0.5 - lx) * self.facing
+        cols = np.flatnonzero((ahead > 0) & (ahead < SUB_BEAM_LENGTH))
+        if len(cols):
+            ahead = ahead[cols]
+            tilt = 0.12 + 0.12 * math.sin(self.frame_count * FRAME_SECONDS * 0.6)
+            off = np.arange(height, dtype=np.float32)[:, None] + 0.5 - ly - ahead * tilt
+            spread = ahead * 0.3 + 0.6
+            glow = np.clip(1 - np.abs(off) / spread, 0, 1) * (1 - ahead / SUB_BEAM_LENGTH) ** 1.5
+            view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
+            lit = view[:, cols] + glow[..., None] * np.array(SUB_BEAM, np.float32)
+            view[:, cols] = np.minimum(lit, 255).astype(np.uint8)
+        self.sprite.draw(fb, width, height, round(self.x), y, self.facing, int(self.prop))
 
 
 class Jellyfish(Event):
@@ -995,8 +984,8 @@ class Turtle(Event):
 EVENTS = {
     "shark": (Shark, 3),
     "whale": (Whale, 2),
+    "submarine": (Submarine, 2),
     "diver": (Diver, 2),
-    "feeding": (Feeding, 3),
     "jellyfish": (Jellyfish, 2),
 }
 VISITORS = {"turtle": Turtle}  # each on its own schedule
