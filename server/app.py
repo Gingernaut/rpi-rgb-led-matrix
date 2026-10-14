@@ -77,7 +77,8 @@ def display_status():
 
 @app.get("/display/modes")
 def display_modes():
-    return {"animations": list(ANIMATIONS)}
+    # Every name here can be POSTed to /display/<name>; "off" comes first
+    return {"animations": ["off", *ANIMATIONS]}
 
 
 # Declared last so the fixed /display/... routes above take precedence
