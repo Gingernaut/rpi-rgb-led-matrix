@@ -15,7 +15,7 @@ ANIMATIONS = {
     "wave1": "wave1.py",
     "plasma": "plasma.py",
     "life": "life.py",
-    "starfield": "starfield.py",
+    "planets": "planets.py",
     "matrix-rain": "matrix_rain.py",
     "fireworks": "fireworks.py",
     "reaction-diffusion": "reaction_diffusion.py",
