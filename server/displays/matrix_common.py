@@ -195,11 +195,12 @@ class BitmapFont:
             elif key == "FONT_DESCENT":
                 descent = int(value)
             elif key == "ENCODING":
-                code = int(value)
+                code = int(value.split()[0])  # -1 (with a second, private code) when unencoded
             elif key == "DWIDTH":
                 advance = int(value.split()[0])
             elif key == "BBX":
                 w, h, x, y = map(int, value.split())
+                x = max(x, 0)  # (a negative left bearing would overlap the previous glyph)
             elif key == "BITMAP":
                 rows = [int(next(lines), 16) for _ in range(h)]
                 # Place the glyph in a full-height cell, baseline at row ascent
@@ -209,7 +210,8 @@ class BitmapFont:
                     if 0 <= top + r < cell.shape[0]:
                         nbits = (w + 7) // 8 * 8
                         cell[top + r, x:x + w] = [(bits >> (nbits - 1 - c)) & 1 for c in range(w)]
-                self.glyphs[chr(code)] = (cell, advance)
+                if code >= 0:
+                    self.glyphs[chr(code)] = (cell, advance)
         self.height = ascent + descent
         self.ascent = ascent
 

@@ -9,14 +9,14 @@ and dots march along where it's headed. Seattle is a pink dot inside a faint
 ring: when the ISS is inside that ring it's at least MIN_ELEVATION above
 Seattle's horizon.
 
-The strip along the bottom shows the next pass visible from Seattle (the ISS
-high enough, lit by the Sun, against a dark sky) with the forecast cloud
-cover from Open-Meteo, alternating with where it appears and disappears, how
-high it climbs, and for how long. Within SOON_SECONDS it counts down, and
-while a pass is up the whole panel turns into a sky view: the pass's arc
-across a compass dome, where to look, how high, and how long is left. A pass
-forecast to be clouded over (CLOUDY_PERCENT) is listed, grayed out, but
-doesn't take over the panel.
+The strip along the bottom shows when the ISS next passes visibly over
+Seattle (high enough, lit by the Sun, against a dark sky), with Open-Meteo's
+forecast cloud cover when the pass is within CLOUD_HORIZON (further out, just
+the date and time). Within SOON_SECONDS it counts down, and while a pass is
+up the whole panel turns into a sky view: the pass's arc across a compass
+dome, where to look, how high, and how long is left. A pass forecast to be
+clouded over (CLOUDY_PERCENT) is listed, grayed out, but doesn't take over
+the panel.
 
 For previews, ISS_START (ISO time, e.g. 2026-10-15T19:40-07:00) runs the
 scene from that moment instead of now, at ISS_SPEED times real time, keeping
@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -59,7 +59,11 @@ MIN_ELEVATION = 10.0
 DARK_SUN_ELEVATION = -6.0
 MIN_PEAK = 20.0
 MIN_VISIBLE_SECONDS = 30
-PREDICT_DAYS = 10
+# Visible passes come in runs of a few weeks, with gaps of up to a month
+# between them, so look far enough ahead to nearly always find the next one
+# (weeks out, the times are only good to a few minutes as the orbit elements
+# age, but they firm up as the pass gets closer)
+PREDICT_DAYS = 31
 PREDICT_STEP = 10  # seconds between samples when searching for passes
 PREDICT_EVERY = 3600  # re-predict hourly, as the orbit elements age
 
@@ -71,6 +75,8 @@ CLOUDY_PERCENT = 70
 # Count down to a pass this far ahead; switch to the sky view PREVIEW_SECONDS
 # before the ISS rises into view, and back AFTER_SECONDS after it's gone
 SOON_SECONDS = 30 * 60
+# Show the cloud forecast for passes this close; further out it's a guess
+CLOUD_HORIZON = 48 * 3600
 PREVIEW_SECONDS = 60
 AFTER_SECONDS = 5
 SKY_FADE_SECONDS = 1.0
@@ -80,7 +86,10 @@ TLE_MAX_AGE = 12 * 3600  # CelesTrak updates every few hours and blocks frequent
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 FORECAST_MAX_AGE = 3600
 FORECAST_STALE = 24 * 3600  # ignore a cached forecast older than this
-FETCH_RETRY = 300  # seconds to wait after a failed fetch
+# Seconds to wait after a failed fetch, doubling while it keeps failing (an
+# outage shouldn't turn into CelesTrak blocking us for asking too often)
+FETCH_RETRY = 300
+FETCH_RETRY_MAX = 3600
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "iss"
 
 WIDTH, HEIGHT = 64, 32
@@ -145,8 +154,6 @@ GOLD = (255, 170, 0)
 CYAN = (60, 190, 255)
 CLEAR_COLOR = (40, 220, 60)
 PARTLY_COLOR = (230, 200, 0)
-PAGE_SECONDS = 4.0
-PAGE_FADE = 0.4
 
 CLOUD_ICON = [
     "..##....",
@@ -343,10 +350,12 @@ def compass(azimuth: float) -> str:
 class Forecast:
     times: np.ndarray  # unix times, hourly
     cloud: np.ndarray  # total cloud cover, percent
+    fetched: float  # when it was fetched (unix time)
 
     def cloud_during(self, start: float, end: float) -> float | None:
-        """Average cloud cover over a pass, or None past the forecast."""
-        if start < self.times[0] or end > self.times[-1]:
+        """Average cloud cover over a pass, or None past the forecast or when
+        the forecast is too old to trust (fetches have been failing)."""
+        if start < self.times[0] or end > self.times[-1] or time.time() - self.fetched > FORECAST_STALE:
             return None
         t = np.linspace(start, end, 5)
         return float(np.interp(t, self.times, self.cloud).mean())
@@ -367,13 +376,18 @@ class Feed:
         self.forecast: Forecast | None = None
         self.passes: list[Pass] = []
         self.predicted_at = -math.inf
+        self.predicted_days = 0
         self.next_fetch = {"tle": 0.0, "forecast": 0.0}
+        self.retry = {"tle": FETCH_RETRY, "forecast": FETCH_RETRY}
         self.errors: dict[str, str] = {}
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        # Start from the cache, so the first frames have something to show;
-        # the thread fetches anything missing or stale
+        # Start from the cache, so the first frames have something to show:
+        # the passes of the next couple of days (a month ahead can take a second
+        # or more on the Pi), then the thread looks further and fetches anything
+        # missing or stale
         self.load_cached()
-        self.predict()
+        self.predict(days=2)
+        self.predicted_at = -math.inf
         threading.Thread(target=self.loop, name="iss-feed", daemon=True).start()
 
     def load_cached(self) -> None:
@@ -383,21 +397,26 @@ class Feed:
             pass
         try:
             path = CACHE_DIR / "forecast.json"
-            if time.time() - path.stat().st_mtime < FORECAST_STALE:
-                self.forecast = parse_forecast(json.loads(path.read_text()))
-        except (OSError, ValueError, KeyError):
+            self.forecast = parse_forecast(json.loads(path.read_text()), path.stat().st_mtime)
+        except (OSError, ValueError, KeyError, TypeError):
             pass
 
     def loop(self) -> None:
         while True:
-            self.update()
+            try:
+                self.update()
+            except Exception as e:  # never let one bad update end the refreshing
+                log(f"update failed: {type(e).__name__}: {e}")
             time.sleep(60)
 
     def update(self) -> None:
-        changed = self.fetch("tle", CACHE_DIR / "tle.txt", TLE_MAX_AGE, self.fetch_tle)
-        self.fetch("forecast", CACHE_DIR / "forecast.json", FORECAST_MAX_AGE, self.fetch_forecast)
-        if changed or self.clock() - self.predicted_at > PREDICT_EVERY:
+        # (abs: also re-predict if the clock jumped back. The Pi has no
+        # real-time clock and may start the scene before it has network time)
+        if abs(self.clock() - self.predicted_at) > PREDICT_EVERY:
             self.predict()
+        if self.fetch("tle", CACHE_DIR / "tle.txt", TLE_MAX_AGE, self.fetch_tle):
+            self.predict()
+        self.fetch("forecast", CACHE_DIR / "forecast.json", FORECAST_MAX_AGE, self.fetch_forecast)
 
     def fetch(self, name: str, path: Path, max_age: float, fetch) -> bool:
         """Refresh the cached file at path with fetch() when it's older than
@@ -416,10 +435,12 @@ class Feed:
             if self.errors.get(name) != error:
                 log(f"{name} fetch failed, retrying: {error}")
             self.errors[name] = error
-            self.next_fetch[name] = now + FETCH_RETRY
+            self.next_fetch[name] = now + self.retry[name]
+            self.retry[name] = min(self.retry[name] * 2, FETCH_RETRY_MAX)
             return False
         if self.errors.pop(name, None):
             log(f"{name} fetch recovered")
+        self.retry[name] = FETCH_RETRY
         return True
 
     def fetch_tle(self, path: Path) -> None:
@@ -439,15 +460,16 @@ class Feed:
             "forecast_days": 8,
         })
         r.raise_for_status()
-        forecast = parse_forecast(r.json())
+        forecast = parse_forecast(r.json(), time.time())
         path.write_text(r.text)
         self.forecast = forecast
 
-    def predict(self) -> None:
+    def predict(self, days: int = PREDICT_DAYS) -> None:
         if self.orbit is None:
             return
         now = self.clock()
-        self.passes = find_passes(self.orbit, now)
+        self.passes = find_passes(self.orbit, now, days)
+        self.predicted_days = days
         self.predicted_at = now
 
 
@@ -460,14 +482,14 @@ def parse_tle(text: str) -> Orbit:
     return Orbit(line1, line2)
 
 
-def parse_forecast(data: dict) -> Forecast:
+def parse_forecast(data: dict, fetched: float) -> Forecast:
     hourly = data["hourly"]
     cloud = np.array([np.nan if c is None else c for c in hourly["cloud_cover"]], dtype=np.float64)
     times = np.array(hourly["time"], dtype=np.float64)
     keep = ~np.isnan(cloud)
-    if keep.sum() < 2:
+    if keep.sum() < 2 or len(times) != len(cloud):
         raise ValueError("empty forecast")
-    return Forecast(times[keep], cloud[keep])
+    return Forecast(times[keep], cloud[keep], fetched)
 
 
 # --- Drawing -----------------------------------------------------------------
@@ -568,14 +590,13 @@ def day_label(start: float, now: float) -> str:
         return "TODAY"
     if days == 1:
         return "TMRW"
-    if days < 7:
-        return when.strftime("%a").upper()
-    return f"{when.month}/{when.day}"
+    return when.strftime("%b %-d").upper()
 
 
-def clock_label(t: float) -> str:
+def clock_label(t: float, short: bool = False) -> str:
+    """E.g. 9:05PM, or 9:05P when short."""
     when = datetime.fromtimestamp(t, TIMEZONE)
-    return f"{when.hour % 12 or 12}:{when.minute:02d}{'AM' if when.hour < 12 else 'PM'}"
+    return f"{when.hour % 12 or 12}:{when.minute:02d}{'A' if when.hour < 12 else 'P'}{'' if short else 'M'}"
 
 
 def countdown(seconds: float) -> str:
@@ -630,6 +651,8 @@ class IssTracker:
         self.arc: tuple[Pass, Splat, np.ndarray, np.ndarray] | None = None
         self.sky_mix = 0.0
         self.sky_pass: Pass | None = None  # the pass the sky view shows (kept while fading out)
+        self.clouds_for: tuple = (None, None)  # the forecast and pass list self.clouds is for
+        self.clouds: dict[float, float | None] = {}  # pass start: cloud cover
 
         self.feed = Feed(self.now)
 
@@ -734,7 +757,7 @@ class IssTracker:
                 # Sitting on the baseline, like the text
                 mask = np.zeros((self.font.height, part.shape[1]), np.float32)
                 mask[self.font.ascent - part.shape[0]:self.font.ascent] = part
-            pieces += [mask[..., None] * rgb(color), np.zeros((self.font.height, 2, 3), np.float32)]
+            pieces += [mask[..., None] * rgb(color), np.zeros((self.font.height, self.gap(part), 3), np.float32)]
         row = np.concatenate(pieces[:-1], axis=1)[:, :width]
         out = np.zeros((self.font.height, width, 3), np.float32)
         x = (width - row.shape[1]) // 2
@@ -742,38 +765,47 @@ class IssTracker:
         self.cache(key, out)
         return out
 
-    def strip_pages(self, now: float, next_pass: Pass | None, cloud: float | None) -> list[list]:
+    def gap(self, part) -> int:
+        """Columns after a line part: 1 after an icon (it labels what follows), else 2."""
+        return 2 if isinstance(part, str) else 1
+
+    def fit(self, lines: list[list]) -> list:
+        """The first of lines (each shorter than the one before) that fits the
+        panel's width, else the last."""
+        for parts in lines[:-1]:
+            width = sum((self.text(part) if isinstance(part, str) else part).shape[1] + self.gap(part)
+                        for part, _ in parts) - self.gap(parts[-1][0])
+            if width <= WIDTH:
+                return parts
+        return lines[-1]
+
+    def strip_line(self, now: float, next_pass: Pass | None, cloud: float | None) -> list:
         if self.feed.orbit is None:
-            return [[("NO ISS DATA", GRAY)]]
+            return [("NO ISS DATA", GRAY)]
         if next_pass is None:
-            return [[(f"NO PASSES {PREDICT_DAYS}D", GRAY)]]
+            return [(f"NO PASSES {self.feed.predicted_days}D", GRAY)]
         p = next_pass
         cloudy = clouded_out(cloud)
-        percent = "?" if cloud is None else f"{round(cloud)}%"
-        weather = [(self.cloud_icon, WHITE if cloud is not None else GRAY), (percent, cloud_color(cloud))]
-        route = f"{compass(p.start_azimuth)}>{compass(p.end_azimuth)}"
-        minutes = max(1, round((p.end - p.start) / 60))
-        details = [(route, GRAY if cloudy else CYAN), (f"{round(p.peak_elevation)}° {minutes}M", GRAY if cloudy else WHITE)]
+        icon = (self.cloud_icon, WHITE if cloud is not None else GRAY)
+        # The cloud cover, and without its % sign for the widest lines
+        weather = [[icon, ("?" if cloud is None else f"{round(cloud)}{sign}", cloud_color(cloud))] for sign in ("%", "")]
         if now >= p.start:
             # Under way but clouded over (a clear one takes over the panel)
-            return [[("OVERHEAD", GRAY)] + weather, details]
+            return [("OVERHEAD", GRAY)] + weather[0]
         if p.start - now < SOON_SECONDS:
-            return [[("ISS IN", GRAY if cloudy else GOLD), (countdown(p.start - now), GRAY if cloudy else WHITE)] + weather,
-                    details]
-        pages = [[(f"{day_label(p.start, now)} {clock_label(p.start)}", GRAY if cloudy else WHITE)] + weather, details]
-        if cloudy:
-            clear = self.next_clear_pass(now)
-            if clear is not None:
-                pages.append([("CLEAR", CLEAR_COLOR), (f"{day_label(clear.start, now)} {clock_label(clear.start)}", WHITE)])
-        return pages
+            soon = [("ISS IN", GRAY if cloudy else GOLD), (countdown(p.start - now), GRAY if cloudy else WHITE)]
+            return self.fit([soon + w for w in weather])
+        # Shortened as needed: 9:05P for 9:05PM, then dropping the % sign
+        day = day_label(p.start, now)
+        long, short = (f"{day} {clock_label(p.start, s)}" for s in (False, True))
+        if p.start - now > CLOUD_HORIZON:
+            return self.fit([[(long, WHITE)], [(short, WHITE)]])
+        color = GRAY if cloudy else WHITE
+        return self.fit([[(long, color)] + weather[0], [(short, color)] + weather[0], [(short, color)] + weather[1]])
 
     def draw_strip(self, frame: np.ndarray, now: float, next_pass: Pass | None, cloud: float | None) -> None:
-        pages = self.strip_pages(now, next_pass, cloud)
-        t = self.frame_count * FRAME_SECONDS
-        index = int(t // PAGE_SECONDS) % len(pages)
-        into = t % PAGE_SECONDS
-        level = 1.0 if len(pages) == 1 else min(1.0, into / PAGE_FADE, (PAGE_SECONDS - into) / PAGE_FADE)
-        frame[STRIP_TOP:STRIP_TOP + self.font.height] += self.line(pages[index], WIDTH) * level
+        line = self.strip_line(now, next_pass, cloud)
+        frame[STRIP_TOP:STRIP_TOP + self.font.height] += self.line(line, WIDTH)
 
     # The sky view ---------------------------------------------------------
 
@@ -790,13 +822,19 @@ class IssTracker:
             dome[y:y + mask.shape[0], x:x + mask.shape[1]] += mask[..., None] * rgb(color)
         return dome.astype(np.float32)
 
-    def pass_arc(self, p: Pass) -> tuple[Splat, np.ndarray, np.ndarray]:
-        """The pass's arc across the dome, prepared for drawing, its points'
-        times, and their dome x and y."""
+    def pass_arc(self, p: Pass) -> tuple[Splat, np.ndarray, np.ndarray, np.ndarray]:
+        """The pass's arc across the dome, prepared for drawing: points spaced
+        evenly along it (the ISS crawls near the horizon, so points evenly
+        spaced in time would bunch up and glare there), with their times and
+        whether the ISS is in view, and the path's dome x and y."""
         if self.arc is None or self.arc[0] is not p:
             x, y = dome_xy(p.path[:, 0], p.path[:, 1])
             times = p.path_start + np.arange(len(p.path)) * PATH_STEP
-            self.arc = (p, Splat(x, y, HEIGHT, 32, wrap=False), times, np.stack([x, y]))
+            along = np.concatenate([[0], np.cumsum(np.hypot(np.diff(x), np.diff(y)))])
+            even = np.linspace(0, along[-1], max(2, math.ceil(along[-1] / 0.4)))
+            visible = np.interp(even, along, p.path_visible.astype(np.float64)) > 0.5
+            splat = Splat(np.interp(even, along, x), np.interp(even, along, y), HEIGHT, 32, wrap=False)
+            self.arc = (p, splat, np.interp(even, along, times), visible, np.stack([x, y]))
         return self.arc[1:]
 
     def draw_sky(self, now: float, p: Pass, cloud: float | None) -> np.ndarray:
@@ -808,22 +846,22 @@ class IssTracker:
         # The pass's arc: dim where it's out of view, brighter where it's
         # visible, brightest where the ISS has already been (drawn over the
         # compass points)
-        splat, times, xy = self.pass_arc(p)
-        weight = np.where(p.path_visible, np.where(times <= now, 0.9, 0.45), 0.18) * 0.6
-        np.maximum(sky, np.minimum(splat.draw(weight), 1)[..., None] * rgb(HALO_COLOR) * 0.6, out=sky)
+        splat, arc_times, arc_visible, xy = self.pass_arc(p)
+        weight = np.where(arc_visible, np.where(arc_times <= now, 0.24, 0.14), 0.07)
+        np.maximum(sky, np.minimum(splat.draw(weight), 1)[..., None] * rgb(HALO_COLOR), out=sky)
 
-        # The ISS, between the arc's points
+        # The ISS, between the path's points
         i = (now - p.path_start) / PATH_STEP
-        up = 0 <= i <= len(times) - 1
-        nearest = min(max(round(i), 0), len(times) - 1)
+        up = 0 <= i <= len(p.path) - 1
+        nearest = min(max(round(i), 0), len(p.path) - 1)
         in_view = up and bool(p.path_visible[nearest])
-        elevation = float(np.interp(i, np.arange(len(times)), p.path[:, 1]))
+        elevation = float(np.interp(i, np.arange(len(p.path)), p.path[:, 1]))
         azimuth = float(p.path[nearest, 0])
         if up:
-            x = float(np.interp(i, np.arange(len(times)), xy[0]))
-            y = float(np.interp(i, np.arange(len(times)), xy[1]))
+            x = float(np.interp(i, np.arange(len(p.path)), xy[0]))
+            y = float(np.interp(i, np.arange(len(p.path)), xy[1]))
             draw_glow(sky, x, y, (0.6 + 0.25 * math.sin(t * 4)) if in_view else 0.0,
-                      rgb(ISS_COLOR if in_view else (110, 110, 110)), rgb(HALO_COLOR), wrap=False)
+                      rgb(ISS_COLOR if in_view else (150, 150, 165)), rgb(HALO_COLOR), wrap=False)
 
         # Where to look, how high, how long
         right = frame[:, 32:]
@@ -837,31 +875,34 @@ class IssTracker:
             status = [(f"{round(max(elevation, 0))}°", CYAN), (countdown(p.end - now), WHITE)]
         right[20:20 + self.font.height] += self.line(status, 32)
         percent = "?" if cloud is None else f"{round(cloud)}%"
-        right[26:26 + self.font.height] += self.line([(self.cloud_icon, WHITE), (percent, cloud_color(cloud))], 32)
+        icon = (self.cloud_icon, WHITE if cloud is not None else GRAY)
+        right[26:26 + self.font.height] += self.line([icon, (percent, cloud_color(cloud))], 32)
         return frame
 
     # ----------------------------------------------------------------------
 
-    def next_clear_pass(self, now: float) -> Pass | None:
-        forecast = self.feed.forecast
-        for p in self.feed.passes:
-            if p.end >= now and forecast is not None:
-                cloud = forecast.cloud_during(p.start, p.end)
-                if cloud is not None and not clouded_out(cloud):
-                    return p
-        return None
-
     def cloud(self, p: Pass | None) -> float | None:
-        forecast = self.feed.forecast
-        return None if p is None or forecast is None else forecast.cloud_during(p.start, p.end)
+        """The forecast cloud cover over a pass, worked out once per pass for
+        each forecast and pass list (the feed replaces them whole)."""
+        if p is None:
+            return None
+        forecast, passes = self.feed.forecast, self.feed.passes
+        if forecast is not self.clouds_for[0] or passes is not self.clouds_for[1]:
+            self.clouds_for, self.clouds = (forecast, passes), {}
+        if p.start not in self.clouds:
+            self.clouds[p.start] = None if forecast is None else forecast.cloud_during(p.start, p.end)
+        return self.clouds[p.start]
 
     def frame(self) -> np.ndarray:
         now = self.now()
         passes = self.feed.passes
         upcoming = next((p for p in passes if p.end >= now), None)
-        # A pass about to rise or up now takes over the panel, unless clouded over
+        # A pass about to rise or up now takes over the panel, unless clouded
+        # over; once shown, it stays up even if a new forecast clouds it over
         showing = next((p for p in passes if p.start - PREVIEW_SECONDS <= now <= p.end + AFTER_SECONDS), None)
-        if showing is not None and not clouded_out(self.cloud(showing)):
+        shown = self.sky_mix > 0 and self.sky_pass is not None and showing is not None \
+            and abs(self.sky_pass.start - showing.start) < 60
+        if showing is not None and (shown or not clouded_out(self.cloud(showing))):
             self.sky_pass = showing
         else:
             showing = None
