@@ -66,8 +66,9 @@ function main() {
     done
 
     if [[ "${USE_SUDO}" -eq 1 ]]; then
-        # --no-sync: syncing as root leaves root-owned files in .venv and the uv cache
-        exec sudo --preserve-env uv run --no-sync uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+        # Keep root from writing into .venv and the uv cache: --no-sync skips the
+        # sync, PYTHONDONTWRITEBYTECODE stops root-owned __pycache__ dirs.
+        exec sudo --preserve-env PYTHONDONTWRITEBYTECODE=1 uv run --no-sync uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     else
         exec uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     fi
