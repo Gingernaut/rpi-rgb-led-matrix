@@ -17,12 +17,25 @@ import sys
 from pathlib import Path
 
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.exceptions import SpotifyException
+from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SPOTIFY_TOKEN_CACHE = PROJECT_ROOT / ".spotify_cache"
 REDIRECT_URI = "http://127.0.0.1:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
+
+
+def make_auth_manager(client_id: str, client_secret: str) -> SpotifyOAuth:
+    """The OAuth setup shared with spotify.py, so the cached token's scope matches."""
+    return SpotifyOAuth(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=REDIRECT_URI,
+        scope=SCOPE,
+        cache_path=str(SPOTIFY_TOKEN_CACHE),
+        open_browser=False,
+    )
 
 
 def main() -> None:
@@ -33,23 +46,18 @@ def main() -> None:
         print("Error: CLIENT_ID and CLIENT_SECRET must be set")
         sys.exit(1)
 
-    auth_manager = SpotifyOAuth(
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=REDIRECT_URI,
-        scope=SCOPE,
-        cache_path=str(SPOTIFY_TOKEN_CACHE),
-        open_browser=False,
-    )
+    auth_manager = make_auth_manager(client_id, client_secret)
 
-    # Check if we already have a valid cached token
-    token_info = auth_manager.cache_handler.get_cached_token()
-    if token_info and not auth_manager.is_token_expired(token_info):
-        print("Already authenticated! Token is cached at .spotify_cache")
-        sp = spotipy.Spotify(auth_manager=auth_manager)
-        user = sp.current_user()
-        print(f"Logged in as: {user['display_name']}")
-        return
+    # Check for a cached token that still works (refreshing it if it expired);
+    # a revoked one falls through to logging in again
+    try:
+        if auth_manager.validate_token(auth_manager.cache_handler.get_cached_token()):
+            user = spotipy.Spotify(auth_manager=auth_manager).current_user()
+            print("Already authenticated! Token is cached at .spotify_cache")
+            print(f"Logged in as: {user['display_name']}")
+            return
+    except (SpotifyOauthError, SpotifyException):
+        pass
 
     # Manual auth flow — no local server needed
     auth_url = auth_manager.get_authorize_url()

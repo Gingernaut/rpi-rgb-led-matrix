@@ -5,30 +5,16 @@ Renders colored meteors (vertical streaks of light) that travel horizontally
 across the display with gradient trailing effects. Features fade-trail streaks,
 slowly rotating hue palette, and variable meteor speeds.
 
-Requires rgbmatrix Python bindings installed (make build-python && make install-python).
+Requires the rgbmatrix Python bindings (make build-python).
 """
 
 import argparse
 import colorsys
-import math
 import random
-import signal
-import sys
 import time
 from enum import Enum
 
-# Lazy import — rgbmatrix only exists on the Pi after make install-python
-rgbmatrix = None
-
-
-def import_rgbmatrix():
-    global rgbmatrix
-    from rgbmatrix import RGBMatrix, RGBMatrixOptions, FrameCanvas
-
-    rgbmatrix = type(sys)("rgbmatrix")
-    rgbmatrix.RGBMatrix = RGBMatrix
-    rgbmatrix.RGBMatrixOptions = RGBMatrixOptions
-    rgbmatrix.FrameCanvas = FrameCanvas
+from matrix_common import FramePacer, create_matrix, parse_matrix_args, run_display
 
 
 class Direction(Enum):
@@ -54,9 +40,6 @@ FADE_LUT = bytes(int(v * FADE_FACTOR) for v in range(256))
 # panel's 75 Hz refresh = 26.67 ms (37.5 fps). Frames follow a fixed deadline
 # schedule, so the average rate stays 37.5 fps at other refresh rates too.
 FRAME_SECONDS = 2 / 75
-# Wake this long before each deadline; SwapOnVSync then waits for the next
-# vsync. Keep it under one refresh period (13.3 ms at 75 Hz).
-VSYNC_MARGIN_SECONDS = 0.003
 
 
 def hue_to_rgb(hue: float, saturation: float = 1.0, value: float = 1.0) -> tuple[int, int, int]:
@@ -109,20 +92,7 @@ def _random_meteor_color(base_hue: float) -> tuple[int, int, int]:
 
 class Wave1Display:
     def __init__(self, args: argparse.Namespace) -> None:
-        self.args = args
-
-        import_rgbmatrix()
-        options = rgbmatrix.RGBMatrixOptions()
-        options.rows = args.rows
-        options.cols = args.cols
-        options.hardware_mapping = args.gpio_mapping
-        options.brightness = args.brightness
-        options.pwm_lsb_nanoseconds = args.pwm_lsb_nanoseconds
-        options.limit_refresh_rate_hz = args.limit_refresh_rate_hz
-        options.drop_privileges = False
-        options.gpio_slowdown = args.slowdown_gpio
-
-        self.matrix = rgbmatrix.RGBMatrix(options=options)
+        self.matrix = create_matrix(args)
 
     def new_random_meteor(self, base_hue: float, random_x: bool = False) -> Meteor:
         y = random.randint(0, self.matrix.height - 1)
@@ -151,7 +121,7 @@ class Wave1Display:
         width = self.matrix.width
         height = self.matrix.height
         start_time = time.monotonic()
-        next_frame = start_time + FRAME_SECONDS
+        pacer = FramePacer(self.matrix, FRAME_SECONDS, first_deadline=start_time + FRAME_SECONDS)
 
         # Framebuffer for the fade-trail effect: packed RGB bytes, row-major
         fb = bytearray(width * height * 3)
@@ -198,44 +168,11 @@ class Wave1Display:
                     meteors[i] = self.new_random_meteor(base_hue)
 
             canvas.SetPixelsRGB(fb, width, height)
-
-            wait = next_frame - VSYNC_MARGIN_SECONDS - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-            canvas = self.matrix.SwapOnVSync(canvas)
-            next_frame += FRAME_SECONDS
-            now = time.monotonic()
-            if now > next_frame:  # fell a whole frame behind; don't try to catch up
-                next_frame = now + FRAME_SECONDS
-
-    def cleanup(self) -> None:
-        pass
+            canvas = pacer.swap(canvas)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wave1 meteor LED matrix display")
-    parser.add_argument("--rows", type=int, default=32)
-    parser.add_argument("--cols", type=int, default=64)
-    parser.add_argument("--gpio-mapping", default="adafruit-hat")
-    parser.add_argument("--brightness", type=int, default=50)
-    parser.add_argument("--slowdown-gpio", type=int, default=4)
-    parser.add_argument("--pwm-lsb-nanoseconds", type=int, default=300)
-    parser.add_argument("--limit-refresh-rate-hz", type=int, default=150)
-    args = parser.parse_args()
-
-    display = Wave1Display(args)
-
-    def handle_signal(signum, frame):
-        display.cleanup()
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-
-    try:
-        display.run()
-    finally:
-        display.cleanup()
+    run_display(Wave1Display(parse_matrix_args("Wave1 meteor LED matrix display")))
 
 
 if __name__ == "__main__":

@@ -4,29 +4,28 @@
 Shows album art, artist name, and song title when music is playing.
 Shows the Spotify logo when idle.
 
-Requires CLIENT_ID and CLIENT_SECRET environment variables.
-Requires rgbmatrix Python bindings installed (make build-python && make install-python).
+Requires CLIENT_ID and CLIENT_SECRET environment variables (log in once with
+spotify_auth.py) and the rgbmatrix Python bindings (make build-python).
 """
 
 import argparse
 import io
 import os
-import signal
 import sys
 import threading
-import time
 from pathlib import Path
 
 import requests
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOauthError
 from PIL import Image
 from pydantic import BaseModel, field_validator
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+from matrix_common import FramePacer, create_matrix, parse_matrix_args, run_display
+from spotify_auth import PROJECT_ROOT, make_auth_manager
+
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
 FONTS_DIR = PROJECT_ROOT / "fonts"
-SPOTIFY_TOKEN_CACHE = PROJECT_ROOT / ".spotify_cache"
 
 # How often to ask Spotify what's playing, and the cap for backing off on errors
 POLL_SECONDS = 5.0
@@ -37,27 +36,11 @@ MAX_POLL_BACKOFF_SECONDS = 60.0
 # 40 ms (25 fps). Frames follow a fixed deadline schedule, so the scroll speed
 # stays the same at other refresh rates too.
 FRAME_SECONDS = 3 / 75
-# Wake this long before each deadline; SwapOnVSync then waits for the next
-# vsync. Keep it under one refresh period (13.3 ms at 75 Hz).
-VSYNC_MARGIN_SECONDS = 0.003
 
 ICON_SIZE = 30
 
-# Lazy import — rgbmatrix only exists on the Pi after make install-python
-rgbmatrix = None
-graphics = None
-
-
-def import_rgbmatrix():
-    global rgbmatrix, graphics
-    from rgbmatrix import RGBMatrix, RGBMatrixOptions, FrameCanvas
-    from rgbmatrix import graphics as _graphics
-
-    rgbmatrix = type(sys)("rgbmatrix")
-    rgbmatrix.RGBMatrix = RGBMatrix
-    rgbmatrix.RGBMatrixOptions = RGBMatrixOptions
-    rgbmatrix.FrameCanvas = FrameCanvas
-    graphics = _graphics
+COMBINED_FONT = "6x9"  # "artist - title" on one scrolling line
+SPLIT_FONT = "5x8"     # artist and title on separate lines
 
 
 class CurrentSong(BaseModel):
@@ -79,13 +62,14 @@ class CurrentSong(BaseModel):
         return len(self.title) > 6
 
     def get_font_name(self) -> str:
-        return "6x9" if self.should_combine_text() else "5x8"
+        return COMBINED_FONT if self.should_combine_text() else SPLIT_FONT
 
 
 def describe_poll_error(e: Exception) -> str:
-    if isinstance(e, EOFError):
-        # spotipy falls back to an interactive login prompt when the saved token
-        # can't be refreshed, and there's no stdin under the service
+    # invalid_grant: the saved refresh token was revoked or expired. EOFError:
+    # there's no usable saved token, so spotipy fell back to an interactive login
+    # prompt, and there's no stdin under the service.
+    if isinstance(e, EOFError) or (isinstance(e, SpotifyOauthError) and e.error == "invalid_grant"):
         return "Spotify login expired; run server/displays/spotify_auth.py to log in again"
     return f"{type(e).__name__}: {e}"
 
@@ -102,18 +86,9 @@ class NowPlaying:
 
 class SpotifyDisplay:
     def __init__(self, args: argparse.Namespace) -> None:
-        self.args = args
-
         # Spotify client, only used from the poller thread once run() starts
         self.sp = spotipy.Spotify(
-            auth_manager=SpotifyOAuth(
-                client_id=os.environ["CLIENT_ID"],
-                client_secret=os.environ["CLIENT_SECRET"],
-                redirect_uri="http://127.0.0.1:8888/callback/",
-                scope="user-read-currently-playing user-library-read",
-                cache_path=str(SPOTIFY_TOKEN_CACHE),
-                open_browser=False,
-            )
+            auth_manager=make_auth_manager(os.environ["CLIENT_ID"], os.environ["CLIENT_SECRET"])
         )
         self.http = requests.Session()
 
@@ -121,21 +96,11 @@ class SpotifyDisplay:
         icon = Image.open(MEDIA_DIR / "spotify.png").convert("RGB")
         self.icon_rgb = icon.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS).tobytes()
 
-        # Matrix setup
-        import_rgbmatrix()
-        options = rgbmatrix.RGBMatrixOptions()
-        options.rows = args.rows
-        options.cols = args.cols
-        options.hardware_mapping = args.gpio_mapping
-        options.brightness = args.brightness
-        options.pwm_lsb_nanoseconds = args.pwm_lsb_nanoseconds
-        options.limit_refresh_rate_hz = args.limit_refresh_rate_hz
-        options.drop_privileges = False
-        options.gpio_slowdown = args.slowdown_gpio
-
-        self.matrix = rgbmatrix.RGBMatrix(options=options)
+        self.matrix = create_matrix(args)
+        from rgbmatrix import graphics  # only on the Pi, like create_matrix's import
+        self.graphics = graphics
         self.fonts = {}
-        for name in ("5x8", "6x9"):
+        for name in (COMBINED_FONT, SPLIT_FONT):
             font = graphics.Font()
             font.LoadFont(str(FONTS_DIR / f"{name}.bdf"))
             self.fonts[name] = font
@@ -148,7 +113,8 @@ class SpotifyDisplay:
         # Latest state from the poller: None when nothing is playing
         self.now_playing: NowPlaying | None = None
         self.changed = threading.Event()
-        self.stop = threading.Event()
+        self.stopping = threading.Event()
+        self.last_poll_error: str | None = None
 
     def fetch_current_song(self) -> CurrentSong | None:
         track = self.sp.current_user_playing_track()
@@ -188,38 +154,37 @@ class SpotifyDisplay:
             self.now_playing = NowPlaying(song, self.render_album_art(song.album_cover))
             self.changed.set()
 
-    def poll_loop(self) -> None:
-        delay = POLL_SECONDS
-        last_error = None
-        while not self.stop.wait(delay):
-            try:
-                self.poll_once()
-            except Exception as e:  # keep showing the last state; retry with backoff
-                error = describe_poll_error(e)
-                if error != last_error:
-                    print(f"spotify: poll failed, retrying: {error}", file=sys.stderr, flush=True)
-                last_error = error
-                delay = min(delay * 2, MAX_POLL_BACKOFF_SECONDS)
-            else:
-                if last_error is not None:
-                    print("spotify: poll recovered", file=sys.stderr, flush=True)
-                last_error = None
-                delay = POLL_SECONDS
-
-    def run(self) -> None:
-        # First poll before the first frame, so a playing song doesn't flash the logo
+    def try_poll(self) -> bool:
+        """poll_once(), logging failures once each (and recovery). Returns success."""
         try:
             self.poll_once()
-        except Exception as e:
-            print(f"spotify: poll failed, retrying: {describe_poll_error(e)}", file=sys.stderr, flush=True)
-        threading.Thread(target=self.poll_loop, name="spotify-poll", daemon=True).start()
+        except Exception as e:  # keep showing the last state; the caller retries
+            error = describe_poll_error(e)
+            if error != self.last_poll_error:
+                print(f"spotify: poll failed, retrying: {error}", file=sys.stderr, flush=True)
+            self.last_poll_error = error
+            return False
+        if self.last_poll_error is not None:
+            print("spotify: poll recovered", file=sys.stderr, flush=True)
+        self.last_poll_error = None
+        return True
+
+    def poll_loop(self, delay: float) -> None:
+        while not self.stopping.wait(delay):
+            delay = POLL_SECONDS if self.try_poll() else min(delay * 2, MAX_POLL_BACKOFF_SECONDS)
+
+    def run(self) -> None:
+        graphics = self.graphics
+        # First poll before the first frame, so a playing song doesn't flash the logo
+        delay = POLL_SECONDS if self.try_poll() else 2 * POLL_SECONDS
+        threading.Thread(target=self.poll_loop, args=(delay,), name="spotify-poll", daemon=True).start()
 
         canvas = self.matrix.CreateFrameCanvas()
         text_color = graphics.Color(255, 255, 255)
         scroll_x = canvas.width
         font = None
         shown = object()  # what's on the panel: a NowPlaying, None (logo), or unset
-        next_frame = time.monotonic()
+        pacer = FramePacer(self.matrix, FRAME_SECONDS)
 
         while True:
             now_playing = self.now_playing
@@ -234,7 +199,7 @@ class SpotifyDisplay:
                     shown = None
                 self.changed.wait(timeout=1.0)
                 self.changed.clear()
-                next_frame = time.monotonic()
+                pacer.reset()
                 continue
 
             song = now_playing.song
@@ -280,44 +245,14 @@ class SpotifyDisplay:
 
             # Album art in its black block, drawn over any text that scrolled under it
             canvas.SetPixelsRGB(now_playing.art_rgb, self.art_block_width, self.matrix.height)
-
-            wait = next_frame - VSYNC_MARGIN_SECONDS - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-            canvas = self.matrix.SwapOnVSync(canvas)
-            next_frame += FRAME_SECONDS
-            now = time.monotonic()
-            if now > next_frame:  # fell a whole frame behind; don't try to catch up
-                next_frame = now + FRAME_SECONDS
+            canvas = pacer.swap(canvas)
 
     def cleanup(self) -> None:
-        self.stop.set()
+        self.stopping.set()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Spotify LED matrix display")
-    parser.add_argument("--rows", type=int, default=32)
-    parser.add_argument("--cols", type=int, default=64)
-    parser.add_argument("--gpio-mapping", default="adafruit-hat")
-    parser.add_argument("--brightness", type=int, default=50)
-    parser.add_argument("--slowdown-gpio", type=int, default=4)
-    parser.add_argument("--pwm-lsb-nanoseconds", type=int, default=300)
-    parser.add_argument("--limit-refresh-rate-hz", type=int, default=150)
-    args = parser.parse_args()
-
-    display = SpotifyDisplay(args)
-
-    def handle_signal(signum, frame):
-        display.cleanup()
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-
-    try:
-        display.run()
-    finally:
-        display.cleanup()
+    run_display(SpotifyDisplay(parse_matrix_args("Spotify LED matrix display")))
 
 
 if __name__ == "__main__":
