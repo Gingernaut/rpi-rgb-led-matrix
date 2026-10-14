@@ -8,13 +8,10 @@ slowly rotating hue palette, and variable meteor speeds.
 Requires the rgbmatrix Python bindings (make build-python).
 """
 
-import argparse
-import colorsys
 import random
-import time
 from enum import Enum
 
-from matrix_common import FramePacer, create_matrix, parse_matrix_args, run_display
+from matrix_common import fade_lut, hsv, put_max, run_scene
 
 
 class Direction(Enum):
@@ -31,9 +28,7 @@ HUE_CYCLE_SECONDS = 60.0
 # Lower = longer trails. 0.85 gives a nice medium-length glow.
 FADE_FACTOR = 0.85
 
-# Per-channel fade lookup table: FADE_LUT[v] == int(v * FADE_FACTOR), applied to
-# the whole framebuffer at C speed with bytearray.translate().
-FADE_LUT = bytes(int(v * FADE_FACTOR) for v in range(256))
+FADE_LUT = fade_lut(FADE_FACTOR)
 
 # Frame period. Meteor speeds and the fade are per frame, and were tuned at the
 # old cadence: ~5 ms of work + sleep(0.02), rounded up to two refreshes of the
@@ -41,11 +36,7 @@ FADE_LUT = bytes(int(v * FADE_FACTOR) for v in range(256))
 # schedule, so the average rate stays 37.5 fps at other refresh rates too.
 FRAME_SECONDS = 2 / 75
 
-
-def hue_to_rgb(hue: float, saturation: float = 1.0, value: float = 1.0) -> tuple[int, int, int]:
-    """Convert HSV (hue 0–1, s 0–1, v 0–1) to RGB (0–255)."""
-    r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
-    return (int(r * 255), int(g * 255), int(b * 255))
+METEOR_COUNT = 16
 
 
 def _build_pixels(base_rgb: tuple[int, int, int], direction: Direction) -> list[tuple[int, int, int]]:
@@ -87,23 +78,30 @@ def _random_meteor_color(base_hue: float) -> tuple[int, int, int]:
     hue = (base_hue + random.uniform(-0.08, 0.08)) % 1.0
     saturation = random.uniform(0.7, 1.0)
     value = random.uniform(0.7, 1.0)
-    return hue_to_rgb(hue, saturation, value)
+    return hsv(hue, saturation, value)
 
 
-class Wave1Display:
-    def __init__(self, args: argparse.Namespace) -> None:
-        self.matrix = create_matrix(args)
+class Wave1:
+    FRAME_SECONDS = FRAME_SECONDS
+
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+        self.frame_count = 0
+        # Framebuffer for the fade-trail effect: packed RGB bytes, row-major
+        self.fb = bytearray(width * height * 3)
+        self.meteors = [self.new_random_meteor(0.55, random_x=True) for _ in range(METEOR_COUNT)]
 
     def new_random_meteor(self, base_hue: float, random_x: bool = False) -> Meteor:
-        y = random.randint(0, self.matrix.height - 1)
+        y = random.randint(0, self.height - 1)
         go_left = bool(random.getrandbits(1))
         speed = random.uniform(0.4, 1.8)
         color = _random_meteor_color(base_hue)
 
         if random_x:
-            x = random.randint(0, self.matrix.width // 2)
+            x = random.randint(0, self.width // 2)
         elif go_left:
-            x = self.matrix.width
+            x = self.width
         else:
             x = -8
 
@@ -115,64 +113,44 @@ class Wave1Display:
             speed=speed,
         )
 
-    def run(self) -> None:
-        canvas = self.matrix.CreateFrameCanvas()
-        met_count = 16
-        width = self.matrix.width
-        height = self.matrix.height
-        start_time = time.monotonic()
-        pacer = FramePacer(self.matrix, FRAME_SECONDS, first_deadline=start_time + FRAME_SECONDS)
+    def frame(self) -> bytearray:
+        width, height = self.width, self.height
+        self.frame_count += 1
+        base_hue = (0.55 + self.frame_count * FRAME_SECONDS / HUE_CYCLE_SECONDS) % 1.0
 
-        # Framebuffer for the fade-trail effect: packed RGB bytes, row-major
-        fb = bytearray(width * height * 3)
+        # Fade the entire framebuffer for streak trails
+        fb = self.fb = self.fb.translate(FADE_LUT)
 
-        base_hue = 0.55  # start in the cyan/blue range
-        meteors = [self.new_random_meteor(base_hue, random_x=True) for _ in range(met_count)]
+        # Draw meteors into the framebuffer
+        meteors = self.meteors
+        for i, meteor in enumerate(meteors):
+            meteor.accum += meteor.speed
+            steps = int(meteor.accum)
+            if steps > 0:
+                meteor.accum -= steps
+                if meteor.direction == Direction.RIGHT:
+                    meteor.x += steps
+                else:
+                    meteor.x -= steps
 
-        while True:
-            elapsed = time.monotonic() - start_time
-            base_hue = (0.55 + elapsed / HUE_CYCLE_SECONDS) % 1.0
+            mx = meteor.x
+            for dx in range(max(0, -mx), min(meteor.length, width - mx)):
+                # Brightest-wins blend so overlapping meteors glow
+                put_max(fb, width, height, mx + dx, meteor.y, meteor.pixels[dx])
 
-            # Fade the entire framebuffer for streak trails
-            fb = fb.translate(FADE_LUT)
+            if meteor.direction == Direction.RIGHT and mx >= width:
+                meteors[i] = self.new_random_meteor(base_hue)
+            elif meteor.direction == Direction.LEFT and mx + meteor.length <= 0:
+                meteors[i] = self.new_random_meteor(base_hue)
 
-            # Draw meteors into the framebuffer
-            for i, meteor in enumerate(meteors):
-                meteor.accum += meteor.speed
-                steps = int(meteor.accum)
-                if steps > 0:
-                    meteor.accum -= steps
-                    if meteor.direction == Direction.RIGHT:
-                        meteor.x += steps
-                    else:
-                        meteor.x -= steps
+        return fb
 
-                mx = meteor.x
-                my = meteor.y
-                if 0 <= my < height:
-                    row_base = my * width
-                    for dx in range(max(0, -mx), min(meteor.length, width - mx)):
-                        r, g, b = meteor.pixels[dx]
-                        # Brightest-wins blend so overlapping meteors glow
-                        p = (row_base + mx + dx) * 3
-                        if r > fb[p]:
-                            fb[p] = r
-                        if g > fb[p + 1]:
-                            fb[p + 1] = g
-                        if b > fb[p + 2]:
-                            fb[p + 2] = b
 
-                if meteor.direction == Direction.RIGHT and mx >= width:
-                    meteors[i] = self.new_random_meteor(base_hue)
-                elif meteor.direction == Direction.LEFT and mx + meteor.length <= 0:
-                    meteors[i] = self.new_random_meteor(base_hue)
-
-            canvas.SetPixelsRGB(fb, width, height)
-            canvas = pacer.swap(canvas)
+SCENE = Wave1
 
 
 def main() -> None:
-    run_display(Wave1Display(parse_matrix_args("Wave1 meteor LED matrix display")))
+    run_scene(Wave1, "Wave1 meteor LED matrix display")
 
 
 if __name__ == "__main__":

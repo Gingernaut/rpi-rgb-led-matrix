@@ -252,7 +252,8 @@ class SpotifyDisplay:
 
 
 def main() -> None:
-    run_display(SpotifyDisplay(parse_matrix_args("Spotify LED matrix display")))
+    display = SpotifyDisplay(parse_matrix_args("Spotify LED matrix display"))
+    run_display(display.run, display.cleanup)
 
 
 if __name__ == "__main__":

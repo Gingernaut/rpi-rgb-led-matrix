@@ -10,6 +10,11 @@ from server.display import DisplayManager
 
 display = DisplayManager(config)
 
+# Animation modes: POST /display/<name> runs server/displays/<script>
+ANIMATIONS = {
+    "wave1": "wave1.py",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,15 +59,24 @@ def display_spotify():
     return {"status": "running", "pid": pid, "mode": "spotify"}
 
 
-@app.post("/display/wave1")
-def display_wave1():
-    pid = display.start_python(script="server/displays/wave1.py")
-    return {"status": "running", "pid": pid, "mode": "wave1"}
-
-
 @app.get("/display/status")
 def display_status():
     return {
         "running": display.is_running,
         "pid": display.current_pid,
     }
+
+
+@app.get("/display/modes")
+def display_modes():
+    return {"animations": list(ANIMATIONS)}
+
+
+# Declared last so the fixed /display/... routes above take precedence
+@app.post("/display/{mode}")
+def display_animation(mode: str):
+    script = ANIMATIONS.get(mode)
+    if script is None:
+        raise HTTPException(status_code=404, detail=f"Unknown mode {mode!r}; see /display/modes")
+    pid = display.start_python(script=f"server/displays/{script}")
+    return {"status": "running", "pid": pid, "mode": mode}

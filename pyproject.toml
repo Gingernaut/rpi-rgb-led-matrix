@@ -10,6 +10,7 @@ dependencies = [
     "Pillow>=12.3",
     "requests>=2.34",
     "setuptools>=84.0",
+    "numpy>=2.3",
 ]
 
 [tool.uv]
