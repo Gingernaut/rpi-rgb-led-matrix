@@ -18,6 +18,7 @@ ANIMATIONS = {
     "starfield": "starfield.py",
     "matrix-rain": "matrix_rain.py",
     "fireworks": "fireworks.py",
+    "reaction-diffusion": "reaction_diffusion.py",
 }
 
 
