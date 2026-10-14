@@ -11,6 +11,7 @@ dependencies = [
     "requests>=2.34",
     "setuptools>=84.0",
     "numpy>=2.3",
+    "sgp4>=2.27",
 ]
 
 [tool.uv]

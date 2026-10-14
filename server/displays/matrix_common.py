@@ -10,6 +10,7 @@ import colorsys
 import signal
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 # The panel refreshes about REFRESH_HZ times a second with DisplayConfig's
 # settings (pwm_lsb_nanoseconds=300); the real rate drifts a few percent, e.g.
@@ -23,6 +24,8 @@ from collections.abc import Callable
 REFRESH_HZ = 75
 
 RGB = tuple[int, int, int]
+
+FONTS_DIR = Path(__file__).resolve().parents[2] / "fonts"
 
 
 def parse_matrix_args(description: str) -> argparse.Namespace:
@@ -165,3 +168,70 @@ def put_max(fb: bytearray, width: int, height: int, x: int, y: int, color: RGB) 
             fb[p + 1] = g
         if b > fb[p + 2]:
             fb[p + 2] = b
+
+
+# --- Text --------------------------------------------------------------------
+
+
+class BitmapFont:
+    """A BDF font from the repo's fonts/ directory, for drawing text into numpy
+    frames (the rgbmatrix graphics module only draws onto a canvas).
+
+        font = BitmapFont("4x6")
+        mask = font.render("12:34")  # (font.height, width) float32, 1 = ink
+        frame[y:y + font.height, x:x + mask.shape[1]] += mask[..., None] * color
+    """
+
+    def __init__(self, name: str) -> None:
+        import numpy as np  # here so the numpy-free scenes needn't load it
+
+        self.glyphs: dict[str, tuple[np.ndarray, int]] = {}  # char: (cell mask, advance)
+        ascent = descent = 0
+        lines = iter((FONTS_DIR / f"{name}.bdf").read_text(encoding="latin-1").splitlines())
+        for line in lines:
+            key, _, value = line.partition(" ")
+            if key == "FONT_ASCENT":
+                ascent = int(value)
+            elif key == "FONT_DESCENT":
+                descent = int(value)
+            elif key == "ENCODING":
+                code = int(value)
+            elif key == "DWIDTH":
+                advance = int(value.split()[0])
+            elif key == "BBX":
+                w, h, x, y = map(int, value.split())
+            elif key == "BITMAP":
+                rows = [int(next(lines), 16) for _ in range(h)]
+                # Place the glyph in a full-height cell, baseline at row ascent
+                cell = np.zeros((ascent + descent, max(advance, x + w)), dtype=np.float32)
+                top = ascent - h - y
+                for r, bits in enumerate(rows):
+                    if 0 <= top + r < cell.shape[0]:
+                        nbits = (w + 7) // 8 * 8
+                        cell[top + r, x:x + w] = [(bits >> (nbits - 1 - c)) & 1 for c in range(w)]
+                self.glyphs[chr(code)] = (cell, advance)
+        self.height = ascent + descent
+        self.ascent = ascent
+
+    def render(self, text: str, proportional: bool = False):
+        """text as a (height, width) float32 mask. proportional trims each glyph
+        to its ink plus a 1 px gap (spaces become 2 px), packing more of a
+        fixed-width font's text into a narrow panel."""
+        import numpy as np
+
+        blank = self.glyphs.get("?") or next(iter(self.glyphs.values()))
+        cells = []
+        for ch in text:
+            cell, advance = self.glyphs.get(ch, blank)
+            if proportional:
+                inked = np.flatnonzero(cell.any(axis=0))
+                if ch == " " or not len(inked):
+                    cell = np.zeros((self.height, 2), dtype=np.float32)
+                else:
+                    cell = np.pad(cell[:, inked[0]:inked[-1] + 1], ((0, 0), (0, 1)))
+            else:
+                cell = cell[:, :advance]
+            cells.append(cell)
+        if proportional and cells:
+            cells[-1] = cells[-1][:, :-1] if cells[-1].shape[1] > 1 else cells[-1]
+        return np.hstack(cells) if cells else np.zeros((self.height, 0), dtype=np.float32)
