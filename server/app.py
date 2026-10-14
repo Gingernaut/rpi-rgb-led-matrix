@@ -13,6 +13,7 @@ display = DisplayManager(config)
 # Animation modes: POST /display/<name> runs server/displays/<script>
 ANIMATIONS = {
     "wave1": "wave1.py",
+    "plasma": "plasma.py",
 }
 
 
