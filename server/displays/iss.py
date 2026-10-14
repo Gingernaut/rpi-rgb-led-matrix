@@ -3,11 +3,11 @@
 day/night world map, and when it can next be seen from Seattle.
 
 The ISS's orbit comes from its published elements (a TLE from CelesTrak,
-fetched twice a day) and is worked out locally with SGP4, so the station
-glides smoothly along its ground track: the past few minutes trail behind it
-and dots march along where it's headed. Seattle is a pink dot inside a faint
-ring: when the ISS is inside that ring it's at least MIN_ELEVATION above
-Seattle's horizon.
+fetched twice a day) and is worked out locally with SGP4. The station is a
+blinking white plus sign on its ground track: the past few minutes trail
+behind it and dots march along where it's headed. Seattle is a pink dot
+inside a faint ring: when the ISS is inside that ring it's at least
+MIN_ELEVATION above Seattle's horizon.
 
 The strip along the bottom shows when the ISS next passes visibly over
 Seattle (high enough, lit by the Sun, against a dark sky), with Open-Meteo's
@@ -143,6 +143,13 @@ TRAIL_COLOR = (255, 90, 20)
 TRACK_COLOR = (110, 110, 130)
 ISS_COLOR = (255, 255, 235)
 HALO_COLOR = (255, 190, 70)
+# The ISS on the map blinks: lit for BLINK_ON of every BLINK_SECONDS, dimmed
+# to BLINK_LOW between, inside a darkened 3x3 border so it stands out on land,
+# ocean and its own trail
+BLINK_SECONDS = 1.0
+BLINK_ON = 0.6
+BLINK_LOW = 0.15
+BORDER_DIM = 0.25
 HOME_COLOR = (255, 40, 140)
 RING_COLOR = (70, 12, 40)
 
@@ -526,6 +533,23 @@ class Splat:
 GLOW_DY, GLOW_DX = (a.ravel() for a in np.mgrid[-2:4, -2:4])
 
 
+MARKER_DY, MARKER_DX = (a.ravel() for a in np.mgrid[-1:2, -1:2])
+# The center at full brightness, its four neighbors less: a small plus sign
+MARKER_LEVEL = np.where((MARKER_DX == 0) & (MARKER_DY == 0), 1.0,
+                        np.where((MARKER_DX == 0) | (MARKER_DY == 0), 0.8, 0.0)).astype(np.float32)[:, None]
+
+
+def draw_marker(frame: np.ndarray, x: float, y: float, level: float, color: np.ndarray) -> None:
+    """A crisp plus sign at the nearest pixel, over a darkened 3x3 border
+    (wrapping around the map's sides)."""
+    height, width = frame.shape[:2]
+    xi = (MARKER_DX + round(x)) % width
+    yi = MARKER_DY + round(y)
+    ok = (yi >= 0) & (yi < height)
+    xi, yi = xi[ok], yi[ok]
+    frame[yi, xi] = np.maximum(frame[yi, xi] * BORDER_DIM, MARKER_LEVEL[ok] * color * level)
+
+
 def draw_glow(frame: np.ndarray, x: float, y: float, halo: float, core_color: np.ndarray,
               halo_color: np.ndarray, wrap: bool) -> None:
     """A bright point with a soft halo at a sub-pixel position."""
@@ -721,8 +745,9 @@ class IssTracker:
 
         if track is not None and len(track[1]) > 1 and track[1][0] <= 0 <= track[1][-1]:
             _, minutes, x, y = track
-            draw_glow(world, float(np.interp(0, minutes, x)) % WIDTH, float(np.interp(0, minutes, y)),
-                      0.45 + 0.15 * math.sin(t * 3), rgb(ISS_COLOR), rgb(HALO_COLOR), wrap=True)
+            lit = t % BLINK_SECONDS < BLINK_ON * BLINK_SECONDS
+            draw_marker(world, float(np.interp(0, minutes, x)) % WIDTH, float(np.interp(0, minutes, y)),
+                        1.0 if lit else BLINK_LOW, rgb(ISS_COLOR))
 
         self.draw_strip(frame, now, next_pass, cloud)
         return frame
