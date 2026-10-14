@@ -67,6 +67,29 @@ cdef class Canvas:
                 b = (pixel >> 16) & 0xFF
                 my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    def SetPixelsRGB(self, const uint8_t[::1] buffer, int width, int height,
+                     int offset_x = 0, int offset_y = 0):
+        """Copy packed row-major RGB bytes (width*height*3, e.g. a bytearray or
+        Image.tobytes()) onto the canvas. Unlike SetImage(), this doesn't read
+        Pillow internals, so it doesn't depend on the Pillow version."""
+        cdef cppinc.Canvas* my_canvas = self._getCanvas()
+        cdef int col_start, col_end, row_start, row_end, row, col, i
+        if width < 0 or height < 0 or buffer.shape[0] < width * height * 3:
+            raise ValueError("buffer must hold width * height * 3 bytes")
+        col_start = max(0, -offset_x)
+        col_end = min(width, my_canvas.width() - offset_x)
+        row_start = max(0, -offset_y)
+        row_end = min(height, my_canvas.height() - offset_y)
+        with nogil:
+            for row in range(row_start, row_end):
+                i = (row * width + col_start) * 3
+                for col in range(col_start, col_end):
+                    my_canvas.SetPixel(offset_x + col, offset_y + row,
+                                       buffer[i], buffer[i + 1], buffer[i + 2])
+                    i += 3
+
 cdef class FrameCanvas(Canvas):
     def __dealloc__(self):
         if <void*>self.__canvas != NULL:
