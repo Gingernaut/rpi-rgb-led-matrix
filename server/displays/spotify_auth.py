@@ -66,7 +66,9 @@ def main() -> None:
     response_url = input("4. Paste the redirect URL here: ").strip()
 
     code = auth_manager.parse_response_code(response_url)
-    auth_manager.get_access_token(code, as_dict=False)
+    # Skip the cache: spotipy would otherwise try to refresh the old token first,
+    # which fails with invalid_grant when that token was revoked
+    auth_manager.get_access_token(code, as_dict=False, check_cache=False)
 
     print()
     print("Success! Token saved to .spotify_cache")
