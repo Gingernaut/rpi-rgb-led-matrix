@@ -21,7 +21,7 @@ from spotipy.oauth2 import SpotifyOauthError
 from PIL import Image
 from pydantic import BaseModel, field_validator
 
-from matrix_common import FramePacer, create_matrix, parse_matrix_args, run_display
+from matrix_common import create_matrix, parse_matrix_args, run_display
 from spotify_auth import PROJECT_ROOT, make_auth_manager
 
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
@@ -31,11 +31,10 @@ FONTS_DIR = PROJECT_ROOT / "fonts"
 POLL_SECONDS = 5.0
 MAX_POLL_BACKOFF_SECONDS = 60.0
 
-# Frame period. Scrolling moves 1 px per frame and was tuned at the old cadence:
-# sleep(0.035) rounded up to three refreshes of the panel's 75 Hz refresh =
-# 40 ms (25 fps). Frames follow a fixed deadline schedule, so the scroll speed
-# stays the same at other refresh rates too.
-FRAME_SECONDS = 3 / 75
+# Frame period, in panel refreshes (see matrix_common.REFRESH_HZ). Scrolling
+# moves 1 px per frame and was tuned at the old cadence: sleep(0.035) rounded
+# up to three refreshes of the panel's ~75 Hz refresh = 40 ms (25 fps).
+FRAME_REFRESHES = 3
 
 ICON_SIZE = 30
 
@@ -184,7 +183,6 @@ class SpotifyDisplay:
         scroll_x = canvas.width
         font = None
         shown = object()  # what's on the panel: a NowPlaying, None (logo), or unset
-        pacer = FramePacer(self.matrix, FRAME_SECONDS)
 
         while True:
             now_playing = self.now_playing
@@ -199,7 +197,6 @@ class SpotifyDisplay:
                     shown = None
                 self.changed.wait(timeout=1.0)
                 self.changed.clear()
-                pacer.reset()
                 continue
 
             song = now_playing.song
@@ -245,7 +242,7 @@ class SpotifyDisplay:
 
             # Album art in its black block, drawn over any text that scrolled under it
             canvas.SetPixelsRGB(now_playing.art_rgb, self.art_block_width, self.matrix.height)
-            canvas = pacer.swap(canvas)
+            canvas = self.matrix.SwapOnVSync(canvas, FRAME_REFRESHES)
 
     def cleanup(self) -> None:
         self.stopping.set()

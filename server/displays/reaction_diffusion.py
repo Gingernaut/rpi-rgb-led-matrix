@@ -17,9 +17,9 @@ import random
 
 import numpy as np
 
-from matrix_common import gradient, run_scene
+from matrix_common import REFRESH_HZ, gradient, run_scene
 
-FRAME_SECONDS = 2 / 75  # 37.5 fps
+FRAME_SECONDS = 2 / REFRESH_HZ  # every 2nd refresh, ~37.5 fps
 STEPS_PER_FRAME = 6
 WARMUP_STEPS = 2500  # grow a pattern before the first frame
 

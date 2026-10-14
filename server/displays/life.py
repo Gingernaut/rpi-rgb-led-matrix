@@ -16,13 +16,11 @@ import random
 
 import numpy as np
 
-from matrix_common import fade_lut, hsv, run_scene
+from matrix_common import REFRESH_HZ, fade_lut, hsv, run_scene
 
-# One frame per panel refresh (~75 Hz), so fades are as smooth as the panel
-# allows. Slightly shorter than a refresh, so the swap sets the pace: at
-# exactly 1/75 s the schedule and the refresh drift apart and about 1% of
-# refreshes repeat a frame, a visible hitch.
-FRAME_SECONDS = 1 / 76
+# One frame per panel refresh (~75 fps), so fades are as smooth as the panel
+# allows
+FRAME_SECONDS = 1 / REFRESH_HZ
 FRAMES_PER_GENERATION = 5  # ~15 generations per second
 
 SPECIES = 3

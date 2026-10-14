@@ -14,9 +14,9 @@ Requires the rgbmatrix Python bindings (make build-python).
 import math
 import random
 
-from matrix_common import fade_lut, mix, run_scene
+from matrix_common import REFRESH_HZ, fade_lut, mix, run_scene
 
-FRAME_SECONDS = 2 / 75  # 37.5 fps
+FRAME_SECONDS = 2 / REFRESH_HZ  # every 2nd refresh, ~37.5 fps
 
 STAR_COUNT = 100  # for a 2:1 panel; scaled with the aspect ratio
 # Stars spawn at depth 1 across SPAWN_SPREAD times the view, so they still fill

@@ -14,9 +14,9 @@ Requires the rgbmatrix Python bindings (make build-python).
 import math
 import random
 
-from matrix_common import fade_lut, mix, put_max, run_scene, scale
+from matrix_common import REFRESH_HZ, fade_lut, mix, put_max, run_scene, scale
 
-FRAME_SECONDS = 2 / 75  # 37.5 fps
+FRAME_SECONDS = 2 / REFRESH_HZ  # every 2nd refresh, ~37.5 fps
 
 TAU = 2 * math.pi
 

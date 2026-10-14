@@ -15,9 +15,9 @@ import random
 
 import numpy as np
 
-from matrix_common import mix, put, run_scene
+from matrix_common import REFRESH_HZ, mix, put, run_scene
 
-FRAME_SECONDS = 3 / 75  # 25 fps
+FRAME_SECONDS = 3 / REFRESH_HZ  # every 3rd refresh, ~25 fps
 
 # Background loop length in frames (20 s), seamless because every light term
 # completes a whole number of cycles in it

@@ -1,4 +1,4 @@
-"""Shared setup for the Python display scripts: options, matrix, frame pacing,
+"""Shared setup for the Python display scripts: options, matrix, refresh timing,
 and the scene runner plus color helpers the animations share.
 
 The scripts run by path (see DisplayManager.start_python), so they import this
@@ -9,12 +9,18 @@ import argparse
 import colorsys
 import signal
 import sys
-import time
 from collections.abc import Callable
 
-# Wake this long before each frame deadline; SwapOnVSync then waits for the
-# next vsync. Keep it under one refresh period (13.3 ms at 75 Hz).
-VSYNC_MARGIN_SECONDS = 0.003
+# The panel refreshes about REFRESH_HZ times a second with DisplayConfig's
+# settings (pwm_lsb_nanoseconds=300); the real rate drifts a few percent, e.g.
+# with the Pi's supply voltage. Frame periods are whole numbers of refreshes,
+# passed to SwapOnVSync as its framerate_fraction: the library's refresh
+# thread then swaps each frame in exactly that many refreshes after the last,
+# so frames stay evenly spaced however late Python gets scheduled. (Sleeping
+# to clock deadlines instead slid in and out of step with the refresh, showing
+# some frames a refresh longer or shorter.) Animation speed follows the real
+# refresh rate.
+REFRESH_HZ = 75
 
 RGB = tuple[int, int, int]
 
@@ -50,30 +56,9 @@ def create_matrix(args: argparse.Namespace):
     return RGBMatrix(options=options)
 
 
-class FramePacer:
-    """Swaps frames on a fixed deadline schedule, so animation speed doesn't
-    depend on the panel's refresh rate or on how long a frame took to draw."""
-
-    def __init__(self, matrix, period: float, first_deadline: float | None = None) -> None:
-        self.matrix = matrix
-        self.period = period
-        self.next_frame = time.monotonic() if first_deadline is None else first_deadline
-
-    def reset(self) -> None:
-        """Start the schedule over from now, e.g. after an idle wait."""
-        self.next_frame = time.monotonic()
-
-    def swap(self, canvas):
-        """Wait for the frame's deadline, swap it in, and return the new back buffer."""
-        wait = self.next_frame - VSYNC_MARGIN_SECONDS - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        canvas = self.matrix.SwapOnVSync(canvas)
-        self.next_frame += self.period
-        now = time.monotonic()
-        if now > self.next_frame:  # fell a whole frame behind; don't try to catch up
-            self.next_frame = now + self.period
-        return canvas
+def refreshes_per_frame(frame_seconds: float) -> int:
+    """SwapOnVSync's framerate_fraction for a frame period."""
+    return max(1, round(frame_seconds * REFRESH_HZ))
 
 
 def run_display(run: Callable[[], None], cleanup: Callable[[], None] | None = None) -> None:
@@ -91,7 +76,7 @@ def run_display(run: Callable[[], None], cleanup: Callable[[], None] | None = No
 # --- Scenes ------------------------------------------------------------------
 #
 # A scene is a class built as Scene(width, height) with a FRAME_SECONDS class
-# attribute and a frame() method returning the next frame as packed row-major
+# attribute (a whole number of refreshes, e.g. 2 / REFRESH_HZ) and a frame() method returning the next frame as packed row-major
 # RGB bytes (width * height * 3): a bytes/bytearray, or a flat C-contiguous
 # uint8 numpy array. Scenes keep time by counting frames, not by the clock, so
 # preview.py can render and time them off the Pi.
@@ -105,14 +90,14 @@ def run_scene(scene_class, description: str) -> None:
     """Entry point for a scene script: show scene_class's frames on the matrix."""
     matrix = create_matrix(parse_matrix_args(description))
     scene = scene_class(matrix.width, matrix.height)
+    refreshes = refreshes_per_frame(scene_class.FRAME_SECONDS)
 
     def run() -> None:
         canvas = matrix.CreateFrameCanvas()
-        pacer = FramePacer(matrix, scene_class.FRAME_SECONDS)
         width, height = matrix.width, matrix.height
         while True:
             canvas.SetPixelsRGB(scene.frame(), width, height)
-            canvas = pacer.swap(canvas)
+            canvas = matrix.SwapOnVSync(canvas, refreshes)
 
     run_display(run)
 

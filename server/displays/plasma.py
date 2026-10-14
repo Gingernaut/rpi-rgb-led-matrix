@@ -12,9 +12,9 @@ import random
 
 import numpy as np
 
-from matrix_common import gradient, hsv, run_scene
+from matrix_common import REFRESH_HZ, gradient, hsv, run_scene
 
-FRAME_SECONDS = 2 / 75  # 37.5 fps
+FRAME_SECONDS = 2 / REFRESH_HZ  # every 2nd refresh, ~37.5 fps
 
 TAU = 2 * math.pi
 

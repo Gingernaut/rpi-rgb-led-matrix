@@ -11,7 +11,7 @@ Requires the rgbmatrix Python bindings (make build-python).
 import random
 from enum import Enum
 
-from matrix_common import fade_lut, hsv, put_max, run_scene
+from matrix_common import REFRESH_HZ, fade_lut, hsv, put_max, run_scene
 
 
 class Direction(Enum):
@@ -32,9 +32,8 @@ FADE_LUT = fade_lut(FADE_FACTOR)
 
 # Frame period. Meteor speeds and the fade are per frame, and were tuned at the
 # old cadence: ~5 ms of work + sleep(0.02), rounded up to two refreshes of the
-# panel's 75 Hz refresh = 26.67 ms (37.5 fps). Frames follow a fixed deadline
-# schedule, so the average rate stays 37.5 fps at other refresh rates too.
-FRAME_SECONDS = 2 / 75
+# panel's ~75 Hz refresh = 26.67 ms (37.5 fps).
+FRAME_SECONDS = 2 / REFRESH_HZ
 
 METEOR_COUNT = 16
 
