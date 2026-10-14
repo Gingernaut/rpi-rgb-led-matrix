@@ -158,6 +158,13 @@ def fade_lut(factor: float) -> bytes:
     return bytes(int(v * factor) for v in range(256))
 
 
+def put(fb: bytearray, width: int, height: int, x: int, y: int, color: RGB) -> None:
+    """Draw a pixel into a packed RGB framebuffer, skipping off-screen pixels."""
+    if 0 <= x < width and 0 <= y < height:
+        p = (y * width + x) * 3
+        fb[p:p + 3] = bytes(color)
+
+
 def put_max(fb: bytearray, width: int, height: int, x: int, y: int, color: RGB) -> None:
     """Draw a pixel into a packed RGB framebuffer, keeping the brighter value
     per channel, so overlapping lights glow instead of covering each other.
