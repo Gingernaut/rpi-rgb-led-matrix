@@ -17,6 +17,11 @@ sudo apt-get update && sudo apt-get install python3-dev cython3 -y
 pip install .
 ```
 
+> **This fork:** the root `pyproject.toml` is the pixel-display server, so
+> `pip install .` installs that instead. Build the bindings in place with
+> `make build-python PYTHON=$PWD/.venv/bin/python` (after `uv sync`); the
+> project's editable install puts `bindings/python` on `sys.path`.
+
 ### PyPy
 The cython binding to PyPy seems to be somewhat working but extremely slow (20x
 slower even than the regular Python binding, 160x slower than C++), so this is

@@ -4,22 +4,6 @@ from libcpp cimport bool
 from libc.stdint cimport uint8_t, uint32_t, uintptr_t
 import cython
 
-cdef extern from "Python.h":
-    void* PyCapsule_GetPointer(object capsule, const char* name)
-    const char* PyCapsule_GetName(object capsule)
-
-cdef extern from "pillow.h":
-    cdef int** get_image32(void* im)
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-cdef int** get_pillow_buffer(object capsule):
-    cdef void *image
-
-    image = PyCapsule_GetPointer(capsule, PyCapsule_GetName(capsule))
-
-    return get_image32(image)
-
 cdef class Canvas:
     cdef cppinc.Canvas* _getCanvas(self) except *:
         raise Exception("Not implemented")
@@ -29,12 +13,10 @@ cdef class Canvas:
             raise Exception("Currently, only RGB mode is supported for SetImage(). Please create images with mode 'RGB' or convert first with image = image.convert('RGB'). Pull requests to support more modes natively are also welcome :)")
 
         if unsafe:
-            #In unsafe mode we directly access the underlying PIL image array
-            #in cython, which is considered unsafe pointer accecss,
-            #however it's super fast and seems to work fine
-            #https://groups.google.com/forum/#!topic/cython-users/Dc1ft5W6KM4
+            # Copy the packed RGB bytes in C. This used to read Pillow's internal
+            # image struct through a C shim, which breaks when Pillow changes it.
             img_width, img_height = image.size
-            self.SetPixelsPillow(offset_x, offset_y, img_width, img_height, image.getim())
+            self.SetPixelsRGB(image.tobytes(), img_width, img_height, offset_x, offset_y)
         else:
             # First implementation of a SetImage(). OPTIMIZE_ME: A more native
             # implementation that directly reads the buffer and calls the underlying
@@ -48,35 +30,14 @@ cdef class Canvas:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    def SetPixelsPillow(self, int xstart, int ystart, int width, int height, object image_capsule):
-        cdef cppinc.FrameCanvas* my_canvas = <cppinc.FrameCanvas*>self._getCanvas()
-        cdef int frame_width = my_canvas.width()
-        cdef int frame_height = my_canvas.height()
-        cdef int row, col
-        cdef uint8_t r, g, b
-        cdef int **buffer
-        cdef int pixel
-
-        buffer = get_pillow_buffer(image_capsule)
-
-        for col in range(max(0, -xstart), min(width, frame_width - xstart)):
-            for row in range(max(0, -ystart), min(height, frame_height - ystart)):
-                pixel = buffer[row][col]
-                r = (pixel ) & 0xFF
-                g = (pixel >> 8) & 0xFF
-                b = (pixel >> 16) & 0xFF
-                my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
     def SetPixelsRGB(self, const uint8_t[::1] buffer, int width, int height,
                      int offset_x = 0, int offset_y = 0):
         """Copy packed row-major RGB bytes (width*height*3, e.g. a bytearray or
-        Image.tobytes()) onto the canvas. Unlike SetImage(), this doesn't read
-        Pillow internals, so it doesn't depend on the Pillow version."""
+        Image.tobytes()) onto the canvas."""
         cdef cppinc.Canvas* my_canvas = self._getCanvas()
-        cdef int col_start, col_end, row_start, row_end, row, col, i
-        if width < 0 or height < 0 or buffer.shape[0] < width * height * 3:
+        cdef int col_start, col_end, row_start, row_end, row, col
+        cdef Py_ssize_t i
+        if width < 0 or height < 0 or buffer.shape[0] < <Py_ssize_t>width * height * 3:
             raise ValueError("buffer must hold width * height * 3 bytes")
         col_start = max(0, -offset_x)
         col_end = min(width, my_canvas.width() - offset_x)
@@ -84,7 +45,7 @@ cdef class Canvas:
         row_end = min(height, my_canvas.height() - offset_y)
         with nogil:
             for row in range(row_start, row_end):
-                i = (row * width + col_start) * 3
+                i = (<Py_ssize_t>row * width + col_start) * 3
                 for col in range(col_start, col_end):
                     my_canvas.SetPixel(offset_x + col, offset_y + row,
                                        buffer[i], buffer[i + 1], buffer[i + 2])

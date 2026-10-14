@@ -21,7 +21,7 @@ clean:
 	$(MAKE) -C lib clean
 	$(MAKE) -C utils clean
 	$(MAKE) -C examples-api-use clean
-	# $(MAKE) -C $(PYTHON_LIB_DIR) clean
+	$(MAKE) -C $(PYTHON_LIB_DIR) clean
 
 install:
 	$(MAKE) -C $(RGB_LIBDIR) install
@@ -36,8 +36,5 @@ build-csharp:
 build-python: $(RGB_LIBRARY)
 	$(MAKE) -C $(PYTHON_LIB_DIR) build
 
-install-python: build-python
-	$(MAKE) -C $(PYTHON_LIB_DIR) install
-
 FORCE:
-.PHONY: FORCE install uninstall
+.PHONY: FORCE install uninstall build-python

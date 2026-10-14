@@ -93,12 +93,10 @@ IF(DEFINED SKBUILD)
     # Make the core extension
     python_add_library(core SHARED
         ${PYBINDING_SOURCE_DIR}/core.cpp
-        ${PYBINDING_SOURCE_DIR}/shims/pillow.c
         ${RGBMATRIX_SOURCES}
     )
     set_target_properties(core PROPERTIES LINKER_LANGUAGE CXX)
     target_include_directories(core PRIVATE
-        ${PYBINDING_SOURCE_DIR}/shims
         ${CMAKE_SOURCE_DIR}/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include
@@ -115,7 +113,6 @@ IF(DEFINED SKBUILD)
     set_target_properties(graphics PROPERTIES LINKER_LANGUAGE CXX)
     target_include_directories(graphics PRIVATE
         ${CMAKE_SOURCE_DIR}/include
-        ${PYBINDING_SOURCE_DIR}/shims
         ${CMAKE_SOURCE_DIR}/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include

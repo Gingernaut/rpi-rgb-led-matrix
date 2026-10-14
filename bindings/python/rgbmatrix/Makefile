@@ -8,8 +8,12 @@ CYTHON ?= cython3
 
 all : core.cpp graphics.cpp
 
+# Cython reads the .pxd declarations too, so regenerate when they change
+core.cpp : core.pxd cppinc.pxd
+graphics.cpp : graphics.pxd cppinc.pxd core.pxd
+
 %.cpp : %.pyx
-	$(CYTHON) --cplus -o $@ $^
+	$(CYTHON) --cplus -o $@ $<
 
 clean:
 	rm -rf core.cpp graphics.cpp
