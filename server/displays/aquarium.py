@@ -96,6 +96,7 @@ STONE = (95, 95, 100)  # the bubbler's air stone
 FLEE_SPEED = 3.5  # times cruising speed, bolting from a shark
 SEEK_SPEED = 2.5  # at most this times cruising speed, going after food
 BAIT_BALL = 0.45  # a frightened school closes up to this much of its spacing
+OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
 
 # --- Events ------------------------------------------------------------------
 #
@@ -276,8 +277,10 @@ class Fish:
         self.place = place
         self.offset = place
         # How far the school spreads left and right of this fish, so a leader
-        # turns early enough to keep its followers inside the glass
+        # turns early enough to keep its followers inside the glass, and
+        # above and below it, so it steers the whole school clear of things
         self.spread = (0, 0)
+        self.stack = (0, 0)
         small = kind == "tetra"
         self.cruise = (random.uniform(0.22, 0.34) if small else random.uniform(0.12, 0.28)) * (1 - 0.3 * depth)
         self.speed = self.cruise
@@ -305,10 +308,7 @@ class Fish:
         """Choose where to turn around next: usually just short of the glass,
         sometimes partway across, and sometimes out of view for a while (the
         tank is bigger than the panel)."""
-        if self.facing > 0:
-            glass = self.tank_width - self.w - self.spread[1]
-        else:
-            glass = self.spread[0]
+        glass = self.glass(self.facing)
         roll = random.random()
         if roll < 0.15:
             beyond = random.uniform(self.w + 4, self.w + 30)
@@ -319,6 +319,10 @@ class Fish:
         self.turn_x = glass + beyond * self.facing
         if (self.turn_x - self.x) * self.facing < 8:
             self.turn_x = glass
+
+    def glass(self, facing: int) -> float:
+        """Where to turn, swimming facing's way, to keep the school in view."""
+        return self.tank_width - self.w - self.spread[1] if facing > 0 else self.spread[0]
 
     def swim(self) -> None:
         if self.leader:
@@ -350,15 +354,17 @@ class Fish:
         ahead = (self.turn_x - self.x) * self.facing
         want = self.cruise * self.pace * min(1.0, max(0.15, ahead / 8))
         if self.pause:
-            # Hover a moment, then maybe head back the other way
+            # Hover a moment, then maybe head back the other way, if there's
+            # room that way
             self.pause -= 1
             want = 0.0
-            if not self.pause and random.random() < 0.5:
+            room = (self.x - self.glass(-self.facing)) * self.facing
+            if not self.pause and room >= 8 and random.random() < 0.5:
                 self.turn()
+        elif ahead <= 0:
+            self.turn()
         elif random.random() < 0.002:
             self.pause = random.randint(25, 100)
-        if ahead <= 0:
-            self.turn()
         self.speed += (want - self.speed) * 0.05
 
     def turn(self) -> None:
@@ -403,10 +409,14 @@ class Fish:
         """Swim to bring the mouth to self.goal, hovering once there."""
         gx, gy = self.goal
         if (gx - (self.x + self.w / 2)) * self.facing < -1:
-            self.facing = -self.facing  # it's behind: turn around
-        nose = self.x + self.w if self.facing > 0 else self.x
-        ahead = (gx - nose) * self.facing
-        want = self.cruise * max(0.0, min(SEEK_SPEED, ahead / 4))
+            # It's behind: stop, then turn around
+            want = 0.0
+            if self.speed < self.cruise * 0.3:
+                self.facing = -self.facing
+        else:
+            nose = self.x + self.w if self.facing > 0 else self.x
+            ahead = (gx - nose) * self.facing
+            want = self.cruise * max(0.0, min(SEEK_SPEED, ahead / 4))
         self.speed += (want - self.speed) * 0.1
         self.target_y = min(max(gy - self.h / 2, self.top), self.bottom)
         climb = max(-0.15, min(0.15, (self.target_y - self.y) * 0.06))
@@ -537,7 +547,8 @@ AMONG = "among"  # drawn among the fish, at its depth
 class Event:
     """Something passing through the tank for a while. Each frame the tank
     calls step(), then draw() at the event's layer; among the fish, it's drawn
-    in front of those deeper than its depth (0 near to 1 far)."""
+    in front of those deeper than its depth (0 near to 1 far). Once it's over,
+    or when another event cuts it short, the tank calls end()."""
 
     layer = AMONG
     depth = 0.5
@@ -549,6 +560,9 @@ class Event:
     def step(self) -> bool:
         """Advance a frame; False once it's over."""
         return False
+
+    def end(self) -> None:
+        """Let the fish go back to their own business."""
 
     def draw(self, fb: bytearray, t: float) -> None:
         pass
@@ -589,11 +603,12 @@ class Shark(Event):
             self.scattered = True
             for fish in self.free_fish():
                 fish.flee(nose - 12 * self.facing)
-        if (self.x + self.sprite.w < 0) if self.facing < 0 else (self.x > self.tank.width):
-            for fish in self.free_fish():
-                fish.calm(frames_for(random.uniform(1.5, 8.0)))
-            return False
-        return True
+        # Until it's gone out the other side
+        return (self.x + self.sprite.w >= 0) if self.facing < 0 else (self.x <= self.tank.width)
+
+    def end(self) -> None:
+        for fish in self.free_fish():
+            fish.calm(frames_for(random.uniform(1.5, 8.0)))
 
     def draw(self, fb: bytearray, t: float) -> None:
         y = round(self.y0 + 1.2 * math.sin(self.frame_count * FRAME_SECONDS * 0.4))
@@ -611,7 +626,7 @@ class Whale(Event):
         self.facing = random.choice((1, -1))
         # The nose starts just out of view
         self.nose = -1.0 if self.facing > 0 else tank.width + 1.0
-        self.y = random.uniform(9, 12)
+        self.y = tank.floor * random.uniform(0.31, 0.42)  # rows 9-12 on a 32-row panel
         self.beat = 0.0
         self.beat_step = 2 * math.pi / frames_for(5.0)
         for fish in tank.fish:
@@ -626,11 +641,12 @@ class Whale(Event):
         left, right = sorted((self.nose, tail))
         covered = max(0.0, min(right, width) - max(left, 0)) / width
         self.shade = 1 - WHALE_SHADOW * covered
-        if (tail > width) if self.facing > 0 else (tail < 0):
-            for fish in self.tank.fish:
-                fish.pace = 1.0
-            return False
-        return True
+        # Until the fluke is out of view
+        return (tail <= width) if self.facing > 0 else (tail >= 0)
+
+    def end(self) -> None:
+        for fish in self.tank.fish:
+            fish.pace = 1.0
 
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
@@ -765,20 +781,26 @@ class Feeding(Event):
             live.append(f)
         self.flakes = kept
         if not self.flakes or not self.frames_left:
-            for fish in self.free_fish():
-                fish.release()
             return False
         if self.frame_count % 5 == 1:
-            # Each fish goes for the flake nearest its mouth; a chewing one
-            # hangs about where it is
+            # Each fish goes for the flake nearest its mouth, or swims about
+            # until the next pinch; a chewing one hangs about where it is
             for fish in self.free_fish():
                 if fish in chewing:
                     continue
                 mx = fish.x + fish.w / 2 + fish.w / 2 * fish.facing
                 my = fish.y + fish.h / 2
                 f = min(live, key=lambda f: (f.x - mx) ** 2 + 2 * (f.y - my) ** 2, default=None)
-                fish.goal = (f.x, f.y) if f else None
+                if f:
+                    fish.goal = (f.x, f.y)
+                elif fish.goal:
+                    fish.release()
         return True
+
+    def end(self) -> None:
+        for fish in self.free_fish():
+            if fish.goal:
+                fish.release()
 
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
@@ -801,13 +823,15 @@ class Jellyfish(Event):
         self.facing = random.choice((1, -1))
         colors = random.sample(JELLY_COLORS, 3)
         self.jellies = []
-        for i in range(random.randint(2, 3)):
+        # The first in drifts fastest, so none catches up with another
+        drifts = sorted((random.uniform(0.07, 0.1) for _ in range(random.randint(2, 3))), reverse=True)
+        for i, drift in enumerate(drifts):
             j = Jellyfish.Jelly()
             # Staggered in from the side they drift from
             j.x = (-6 - i * random.uniform(14, 22)) if self.facing > 0 else tank.width + 6 + i * random.uniform(14, 22)
             j.y = random.uniform(4, tank.floor - 14)
             j.vy = 0.0
-            j.drift = random.uniform(0.07, 0.1) * self.facing
+            j.drift = drift * self.facing
             j.color = colors[i]
             j.rim = mix(colors[i], (255, 255, 255), 0.45)
             j.period = frames_for(random.uniform(2.2, 3.2))
@@ -887,7 +911,7 @@ class Diver(Event):
         self.breath = frames_for(1.0)
         # The curious fish each keep their own spot around the diver
         curious = [fish for fish in self.free_fish() if random.random() < 0.7]
-        spots = random.sample(DIVER_FOLLOW_SPOTS, len(curious))
+        spots = random.sample(DIVER_FOLLOW_SPOTS, len(DIVER_FOLLOW_SPOTS))
         self.followers = {fish: (w / 2 + dx, h / 2 + dy) for fish, (dx, dy) in zip(curious, spots)}
 
     def step(self) -> bool:
@@ -895,10 +919,11 @@ class Diver(Event):
         moving = 0.0
         if self.wait:
             self.wait -= 1
-            tank.chest_hold = max(tank.chest_hold, 2)
             if not self.wait:
                 self.coin = True
                 self.stops.pop(0)
+                # Shut for a while now, not bursting open again as it leaves
+                tank.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
         else:
             tx, ty, look = self.stops[0]
             dx, dy = tx - self.x, ty - self.y
@@ -906,13 +931,13 @@ class Diver(Event):
             moving = min(DIVER_SPEED, dist * 0.05)
             if dist < 0.3:
                 if not look:
-                    for fish in self.followers:
-                        fish.release()
                     return False
                 self.wait = look
             else:
                 self.x += dx / dist * moving
                 self.y += dy / dist * moving
+        if self.wait:
+            tank.chest_hold = max(tank.chest_hold, 2)  # holding it open
         # Fins kick while swimming, idle while it looks
         self.kick = (self.kick + 0.03 + moving * 0.35) % 2
         # A burst of breath every few seconds
@@ -925,6 +950,10 @@ class Diver(Event):
             for fish, (ox, oy) in self.followers.items():
                 fish.goal = (self.x + ox, self.y + oy)
         return True
+
+    def end(self) -> None:
+        for fish in self.followers:
+            fish.release()
 
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
@@ -1038,8 +1067,9 @@ class Aquarium:
                 # Keep the leader far enough from the glass, surface and sand
                 # for the whole school to fit
                 fish.spread = (max(-px for px, py in SCHOOL_PLACES), max(px for px, py in SCHOOL_PLACES))
-                fish.top -= min(py for px, py in SCHOOL_PLACES)
-                fish.bottom -= max(py for px, py in SCHOOL_PLACES)
+                fish.stack = (max(-py for px, py in SCHOOL_PLACES), max(py for px, py in SCHOOL_PLACES))
+                fish.top += fish.stack[0]
+                fish.bottom -= fish.stack[1]
                 fish.y = fish.target_y = min(max(fish.y, fish.top), fish.bottom)
                 fish.pick_turn()
                 self.fish += [Fish(kind, width, top, bottom, depth, fish, place) for place in SCHOOL_PLACES]
@@ -1060,7 +1090,10 @@ class Aquarium:
         self.shade_luts: dict[int, bytes] = {}
 
     def start(self, name: str) -> None:
-        """Begin the named event (from EVENTS or VISITORS) now."""
+        """Begin the named event (from EVENTS or VISITORS) now, cutting short
+        any under way."""
+        if self.event:
+            self.event.end()
         event_class = EVENTS[name][0] if name in EVENTS else VISITORS[name]
         self.event = event_class(self)
 
@@ -1068,6 +1101,7 @@ class Aquarium:
         """Run the event under way, or count down the quiet to the next."""
         if self.event:
             if not self.event.step():
+                self.event.end()
                 self.event = None
             return
         if self.only:
@@ -1109,13 +1143,14 @@ class Aquarium:
         for weed in self.back_weeds:
             weed.draw(fb, width, height, t)
 
-        # Every so often the chest lid lifts and lets out a burst of bubbles
+        # Every so often the chest lid lifts and lets out a burst of bubbles;
+        # an event can hold it open too
         self.chest_timer -= 1
-        if self.chest_hold:
-            self.chest_hold -= 1
         if self.chest_timer <= 0:
             self.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
-        elif self.chest_timer <= CHEST_OPEN_FRAMES or self.chest_hold:
+        if self.chest_hold:
+            self.chest_hold -= 1
+        if self.chest_timer <= CHEST_OPEN_FRAMES or self.chest_hold:
             for dx, dy, color in self.chest_lid:
                 put(fb, width, height, self.chest_x + dx, self.chest_y + dy - 1, color)
             if random.random() < (0.15 if self.chest_hold else 0.5):
@@ -1176,11 +1211,16 @@ class Aquarium:
             return
         for left, top, right, bottom in self.event.obstacles():
             for f in fish:
-                if f.leader or f.goal or not (f.x < right + 3 and f.x + f.w > left - 3):
+                if f.leader or f.goal:
                     continue
-                if f.y < bottom + 1 and f.y + f.h > top - 1:
+                # The fish and its school, and the water just ahead of them,
+                # so they start to steer in time
+                near = f.x - f.spread[0] - (3 if f.facing > 0 else OBSTACLE_LOOK)
+                far = f.x + f.w + f.spread[1] + (OBSTACLE_LOOK if f.facing > 0 else 3)
+                if (near < right and far > left
+                        and f.y - f.stack[0] < bottom + 1 and f.y + f.h + f.stack[1] > top - 1):
                     # Whichever way round is shorter, if there's room
-                    above, below = top - f.h - 2, bottom + 2
+                    above, below = top - 2 - f.h - f.stack[1], bottom + 2 + f.stack[0]
                     go = above if f.y + f.h / 2 < (top + bottom) / 2 and above >= f.top else below
                     f.target_y = min(max(go, f.top), f.bottom)
 
