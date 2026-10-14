@@ -10,8 +10,8 @@ seaweed stands in front of them, and the neon tetras swim as a school.
 Every minute or so something happens (see EVENTS): a shark cruises through
 and the fish scatter, a whale or an old submarine passes in the distance,
 jellyfish drift by, or a sea turtle paddles across. To try one out,
-AQUARIUM_EVENT shows just that one, a couple of seconds in and then after
-every EVENT_TEST_SECONDS of quiet:
+AQUARIUM_EVENT shows just that one, a couple of seconds in and then every
+few seconds after (see aquarium_common):
 
     AQUARIUM_EVENT=shark uv run server/displays/preview.py aquarium --seconds 30
 
@@ -19,14 +19,12 @@ Requires the rgbmatrix Python bindings (make build-python) and numpy.
 """
 
 import math
-import os
 import random
 
 import numpy as np
 
-from matrix_common import REFRESH_HZ, fade_lut, mix, put, put_max, run_scene
-
-FRAME_SECONDS = 3 / REFRESH_HZ  # every 3rd refresh, ~25 fps
+from aquarium_common import AMONG, BACK, FRAME_SECONDS, Event, Fish, Sprite, Tank, frames_for, render_sprite, school
+from matrix_common import fade_lut, mix, put, put_max, run_scene
 
 # Background loop length in frames (20 s), seamless because every light term
 # completes a whole number of cycles in it
@@ -41,8 +39,7 @@ SAND = [(150, 120, 60), (120, 92, 45), (175, 145, 80), (135, 105, 52)]
 PEBBLES = [(110, 110, 105), (150, 85, 70), (80, 75, 70)]
 SAND_ROWS = 3  # on average; the sand's surface rolls a row up and down
 
-# Sprites face right; each character is a color from the sprite's palette,
-# "." is transparent. Two frames per fish: tail swept up/down.
+# Sprites (see aquarium_common.Sprite), two frames per fish: tail swept up/down
 SPRITES = {
     "clownfish": (
         {"O": (255, 100, 0), "W": (255, 255, 255), "K": (20, 20, 20)},
@@ -91,17 +88,7 @@ CHEST_SECONDS = (15.0, 40.0)  # closed for this long
 CHEST_OPEN_FRAMES = 30
 STONE = (95, 95, 100)  # the bubbler's air stone
 
-# Fish behavior around events
-FLEE_SPEED = 3.5  # times cruising speed, bolting from a shark
-BAIT_BALL = 0.45  # a frightened school closes up to this much of its spacing
-OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
-
-# --- Events ------------------------------------------------------------------
-#
-# After EVENT_SECONDS of quiet (random within) one of EVENTS starts, picked by
-# weight and never the same one twice running. One thing happens at a time.
-EVENT_SECONDS = (30.0, 90.0)
-EVENT_TEST_SECONDS = 8.0  # AQUARIUM_EVENT's quiet between showings
+# The events' looks (see EVENTS; aquarium_common schedules them)
 
 SHARK_PALETTE = {
     "G": (105, 120, 138), "D": (72, 85, 102), "W": (195, 200, 205),
@@ -212,214 +199,6 @@ SUB_BEAM_LENGTH = 26
 JELLY_COLORS = [(230, 70, 170), (150, 90, 255), (80, 190, 255), (255, 120, 90)]
 
 
-def frames_for(seconds: float) -> int:
-    return max(1, round(seconds / FRAME_SECONDS))
-
-
-def flip(rows: list[str]) -> list[str]:
-    return [row[::-1] for row in rows]
-
-
-def render_sprite(palette: dict, rows: list[str]) -> list[tuple[int, int, tuple]]:
-    """Sprite rows to (dx, dy, color) for the opaque pixels."""
-    return [
-        (dx, dy, palette[ch])
-        for dy, row in enumerate(rows)
-        for dx, ch in enumerate(row)
-        if ch != "."
-    ]
-
-
-class Sprite:
-    """Sprite frames as pixel lists for each facing, hazed toward the water by
-    depth (0 near to 1 far)."""
-
-    def __init__(self, palette: dict, frames: list[list[str]], depth: float = 0.0) -> None:
-        palette = {ch: mix(color, HAZE, depth * 0.22) for ch, color in palette.items()}
-        # [facing right, facing left][frame]
-        self.pixels = [
-            [render_sprite(palette, f) for f in frames],
-            [render_sprite(palette, flip(f)) for f in frames],
-        ]
-        self.w = len(frames[0][0])
-        self.h = len(frames[0])
-
-    def draw(self, fb: bytearray, width: int, height: int, x: int, y: int, facing: int, frame: int) -> None:
-        for dx, dy, color in self.pixels[facing < 0][frame]:
-            put(fb, width, height, x + dx, y + dy, color)
-
-    def at(self, x: float, facing: int, point: tuple[int, int]) -> float:
-        """The panel x of a point given in the right-facing sprite's coordinates."""
-        return x + (point[0] if facing > 0 else self.w - 1 - point[0])
-
-
-class Fish:
-    """A fish cruising back and forth, now and then pausing, turning around or
-    changing depth. Given a leader, it keeps its place near that fish instead.
-    Events can send it fleeing out of view (flee/calm) or slow it down (pace).
-
-    depth is 0 (near) to 1 (far): far fish are hazed and swim a little slower."""
-
-    def __init__(self, kind: str, width: int, top: int, bottom: int, depth: float,
-                 leader: "Fish | None" = None, place: tuple[int, int] = (0, 0)) -> None:
-        palette, frames = SPRITES[kind]
-        self.sprite = Sprite(palette, frames, depth)
-        self.w = self.sprite.w
-        self.h = self.sprite.h
-        self.tank_width = width
-        self.top = top
-        self.bottom = max(top, bottom - self.h)
-        self.depth = depth
-        self.leader = leader
-        self.place = place
-        self.offset = place
-        # How far the school spreads left and right of this fish, so a leader
-        # turns early enough to keep its followers inside the glass, and
-        # above and below it, so it steers the whole school clear of things
-        self.spread = (0, 0)
-        self.stack = (0, 0)
-        small = kind == "tetra"
-        self.cruise = (random.uniform(0.22, 0.34) if small else random.uniform(0.12, 0.28)) * (1 - 0.3 * depth)
-        self.speed = self.cruise
-        self.vy = 0.0
-        self.tail = random.uniform(0, 2)  # tail beat phase; the frame is int(tail)
-        self.bob = random.uniform(0, 2 * math.pi)
-        self.pause = 0
-        self.fleeing = False
-        self.calm_in = 0  # frames until a fleeing fish heads back
-        self.pace = 1.0  # scales its cruising speed
-        self.tight = self.tight_to = 1.0  # a leader's school spacing, eased
-        if leader:
-            self.x = leader.x + place[0]
-            self.y = min(max(leader.y + place[1], self.top), self.bottom)
-            self.facing = leader.facing
-        else:
-            self.x = random.uniform(0, width - self.w)
-            self.y = random.uniform(self.top, self.bottom)
-            self.facing = random.choice((1, -1))
-            self.pick_turn()
-        self.target_y = self.y
-
-    def pick_turn(self) -> None:
-        """Choose where to turn around next: usually just short of the glass,
-        sometimes partway across, and sometimes out of view for a while (the
-        tank is bigger than the panel)."""
-        glass = self.glass(self.facing)
-        roll = random.random()
-        if roll < 0.15:
-            beyond = random.uniform(self.w + 4, self.w + 30)
-        elif roll < 0.35:
-            beyond = -random.uniform(8, self.tank_width / 2)
-        else:
-            beyond = random.uniform(-4, 1)
-        self.turn_x = glass + beyond * self.facing
-        if (self.turn_x - self.x) * self.facing < 8:
-            self.turn_x = glass
-
-    def glass(self, facing: int) -> float:
-        """Where to turn, swimming facing's way, to keep the school in view."""
-        return self.tank_width - self.w - self.spread[1] if facing > 0 else self.spread[0]
-
-    def swim(self) -> None:
-        if self.leader:
-            self.follow()
-        elif self.fleeing:
-            self.bolt()
-        else:
-            self.wander()
-        self.x += self.speed * self.facing
-        self.y += self.vy
-        self.tight += (self.tight_to - self.tight) * 0.05
-        # Tail beats faster when swimming faster
-        self.tail = (self.tail + 0.08 + self.speed * 0.5) % 2
-
-    def glide(self, rate: float = 0.07) -> None:
-        """Ease toward target_y, smoothly and at most rate pixels a frame."""
-        climb = max(-rate, min(rate, (self.target_y - self.y) * 0.03))
-        self.vy += (climb - self.vy) * 0.1
-
-    def wander(self) -> None:
-        # Now and then glide to a new depth, slowly and smoothly
-        if random.random() < 0.006:
-            self.target_y = random.uniform(self.top, self.bottom)
-        self.glide()
-
-        # Slow down nearing the turning point, and turn there
-        ahead = (self.turn_x - self.x) * self.facing
-        want = self.cruise * self.pace * min(1.0, max(0.15, ahead / 8))
-        if self.pause:
-            # Hover a moment, then maybe head back the other way, if there's
-            # room that way
-            self.pause -= 1
-            want = 0.0
-            room = (self.x - self.glass(-self.facing)) * self.facing
-            if not self.pause and room >= 8 and random.random() < 0.5:
-                self.turn()
-        elif ahead <= 0:
-            self.turn()
-        elif random.random() < 0.002:
-            self.pause = random.randint(25, 100)
-        self.speed += (want - self.speed) * 0.05
-
-    def turn(self) -> None:
-        self.facing = -self.facing
-        self.pick_turn()
-
-    def flee(self, from_x: float) -> None:
-        """Bolt away from from_x to somewhere out of view, and wait there
-        until calm(). A school balls up tight as it goes."""
-        self.fleeing = True
-        self.calm_in = 0
-        self.pause = 0
-        self.facing = 1 if self.x + self.w / 2 >= from_x else -1
-        # Far enough past the glass for the whole school to be hidden
-        if self.facing > 0:
-            self.turn_x = self.tank_width + self.spread[0] + random.uniform(3, 15)
-        else:
-            self.turn_x = -self.w - self.spread[1] - random.uniform(3, 15)
-        self.target_y = random.uniform(self.top, self.bottom)
-        self.tight_to = BAIT_BALL
-
-    def calm(self, delay: int) -> None:
-        """Head back in after delay frames."""
-        if self.fleeing:
-            self.calm_in = max(1, delay)
-
-    def bolt(self) -> None:
-        self.glide(0.12)
-        ahead = (self.turn_x - self.x) * self.facing
-        want = self.cruise * FLEE_SPEED if ahead > 0 else 0.0
-        self.speed += (want - self.speed) * 0.15
-        if self.calm_in:
-            self.calm_in -= 1
-            if not self.calm_in:
-                self.fleeing = False
-                self.tight_to = 1.0
-                # Back toward the middle of the tank from wherever it hid
-                self.facing = 1 if self.x + self.w / 2 < self.tank_width / 2 else -1
-                self.pick_turn()
-
-    def follow(self) -> None:
-        lead = self.leader
-        # Turn a moment after the leader does, each in its own time
-        if self.facing != lead.facing and random.random() < 0.12:
-            self.facing = lead.facing
-        # Drift around within the place, so the school loosens and tightens
-        if random.random() < 0.004:
-            self.offset = (self.place[0] + random.uniform(-1, 1), self.place[1] + random.uniform(-0.7, 0.7))
-        # Speed up or ease off to hold the place (never backing up)
-        behind = (lead.x + self.offset[0] * lead.tight - self.x) * self.facing
-        top_speed = max(lead.cruise * 1.8, lead.speed * 1.3)
-        want = max(0.0, min(top_speed, lead.speed + behind * 0.04))
-        self.speed += (want - self.speed) * 0.2
-        target_y = min(max(lead.y + self.offset[1] * lead.tight, self.top), self.bottom)
-        self.vy = max(-0.15, min(0.15, (target_y - self.y) * 0.05))
-
-    def draw(self, fb: bytearray, width: int, height: int, t: float) -> None:
-        y = round(self.y + math.sin(t * 1.3 + self.bob) * 0.6)
-        self.sprite.draw(fb, width, height, round(self.x), y, self.facing, int(self.tail))
-
-
 class Bubble:
     __slots__ = ("x", "y", "speed", "phase")
 
@@ -505,41 +284,6 @@ def render_background(width: int, height: int, sand_top: list[int], props: dict)
 
 # --- Events ------------------------------------------------------------------
 
-BACK = "back"  # drawn behind the seaweed and fish
-AMONG = "among"  # drawn among the fish, at its depth
-
-
-class Event:
-    """Something passing through the tank for a while. Each frame the tank
-    calls step(), then draw() at the event's layer; among the fish, it's drawn
-    in front of those deeper than its depth (0 near to 1 far). Once it's over,
-    or when another event cuts it short, the tank calls end()."""
-
-    layer = AMONG
-    depth = 0.5
-    shade = 1.0  # how much light reaches the tank, when something blocks it
-
-    def __init__(self, tank: "Aquarium") -> None:
-        self.tank = tank
-
-    def step(self) -> bool:
-        """Advance a frame; False once it's over."""
-        return False
-
-    def end(self) -> None:
-        """Let the fish go back to their own business."""
-
-    def draw(self, fb: bytearray, t: float) -> None:
-        pass
-
-    def obstacles(self) -> list[tuple[float, float, float, float]]:
-        """(left, top, right, bottom) boxes the fish steer clear of."""
-        return []
-
-    def free_fish(self) -> list[Fish]:
-        """The fish that go their own way (school leaders, not followers)."""
-        return [fish for fish in self.tank.fish if not fish.leader]
-
 
 class Shark(Event):
     """A shark cruises slowly through near the glass. The fish bolt out of view
@@ -550,7 +294,7 @@ class Shark(Event):
 
     def __init__(self, tank: "Aquarium") -> None:
         super().__init__(tank)
-        self.sprite = Sprite(SHARK_PALETTE, SHARK, self.depth)
+        self.sprite = Sprite(SHARK_PALETTE, SHARK, self.depth, HAZE)
         self.facing = random.choice((1, -1))
         self.x = -self.sprite.w - 2.0 if self.facing > 0 else tank.width + 2.0
         self.y0 = random.uniform(5, tank.floor - self.sprite.h - 4)
@@ -709,7 +453,7 @@ class Submarine(Event):
             for row, tail in prop.items():
                 rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row])) + rows[row][len(tail):]
             frames.append(rows)
-        self.sprite = Sprite(SUB_PALETTE, frames, self.depth)
+        self.sprite = Sprite(SUB_PALETTE, frames, self.depth, HAZE)
         self.facing = random.choice((1, -1))
         # Far enough out that the searchlight slides into view ahead of it,
         # rather than switching on all at once
@@ -836,7 +580,7 @@ class Turtle(Event):
 
     def __init__(self, tank: "Aquarium") -> None:
         super().__init__(tank)
-        self.sprite = Sprite(TURTLE_PALETTE, [TURTLE_BODY + f for f in TURTLE_FLIPPERS], self.depth)
+        self.sprite = Sprite(TURTLE_PALETTE, [TURTLE_BODY + f for f in TURTLE_FLIPPERS], self.depth, HAZE)
         self.facing = random.choice((1, -1))
         self.x = -self.sprite.w - 2.0 if self.facing > 0 else tank.width + 2.0
         self.y0 = random.uniform(7, tank.floor - self.sprite.h - 5)
@@ -866,8 +610,8 @@ EVENTS = {
 }
 
 
-class Aquarium:
-    FRAME_SECONDS = FRAME_SECONDS
+class Aquarium(Tank):
+    EVENTS = EVENTS
 
     def __init__(self, width: int, height: int) -> None:
         self.width = width
@@ -924,59 +668,19 @@ class Aquarium:
         top, bottom = 1, floor - 1
         self.fish = []
         for kind, depth in zip(kinds, depths):
-            fish = Fish(kind, width, top, bottom, depth)
-            self.fish.append(fish)
-            if kind == SCHOOL:
-                # Keep the leader far enough from the glass, surface and sand
-                # for the whole school to fit
-                fish.spread = (max(-px for px, py in SCHOOL_PLACES), max(px for px, py in SCHOOL_PLACES))
-                fish.stack = (max(-py for px, py in SCHOOL_PLACES), max(py for px, py in SCHOOL_PLACES))
-                fish.top += fish.stack[0]
-                fish.bottom -= fish.stack[1]
-                fish.y = fish.target_y = min(max(fish.y, fish.top), fish.bottom)
-                fish.pick_turn()
-                self.fish += [Fish(kind, width, top, bottom, depth, fish, place) for place in SCHOOL_PLACES]
+            sprite = Sprite(*SPRITES[kind], depth, HAZE)
+            cruise = (0.22, 0.34) if kind == SCHOOL else (0.12, 0.28)
+
+            def make_fish(leader=None, place=(0, 0)):
+                return Fish(sprite, width, top, bottom, depth, cruise, leader, place)
+
+            self.fish += school(make_fish, SCHOOL_PLACES) if kind == SCHOOL else [make_fish()]
         self.fish.sort(key=lambda fish: -fish.depth)
 
         self.bubbles: list[Bubble] = []
         self.frame_count = 0
-
-        # Events: the one under way (if any), and the quiet frames left before
-        # the next one starts
-        self.event: Event | None = None
-        self.last_event = None
-        self.only = os.environ.get("AQUARIUM_EVENT")
-        if self.only and self.only not in EVENTS:
-            raise SystemExit(f"AQUARIUM_EVENT must be one of {', '.join(EVENTS)}")
-        self.event_wait = frames_for(2.0 if self.only else random.uniform(*EVENT_SECONDS))
+        self.init_events()
         self.shade_luts: dict[int, bytes] = {}
-
-    def start(self, name: str) -> None:
-        """Begin the named event (from EVENTS) now, cutting short any under
-        way."""
-        if self.event:
-            self.event.end()
-        self.event = EVENTS[name][0](self)
-
-    def direct(self) -> None:
-        """Run the event under way, or count down the quiet to the next."""
-        if self.event:
-            if not self.event.step():
-                self.event.end()
-                self.event = None
-            return
-        if self.only:
-            self.event_wait -= 1
-            if self.event_wait <= 0:
-                self.event_wait = frames_for(EVENT_TEST_SECONDS)
-                self.start(self.only)
-            return
-        self.event_wait -= 1
-        if self.event_wait <= 0:
-            self.event_wait = frames_for(random.uniform(*EVENT_SECONDS))
-            names = [name for name in EVENTS if name != self.last_event]
-            self.last_event = random.choices(names, [EVENTS[name][1] for name in names])[0]
-            self.start(self.last_event)
 
     def frame(self) -> bytearray:
         width, height = self.width, self.height
@@ -1045,38 +749,6 @@ class Aquarium:
             weed.draw(fb, width, height, t)
 
         return fb
-
-    def give_room(self) -> None:
-        """Fish that come too close drift apart vertically, so they don't
-        swim along stuck together. A school moves aside as one. They also
-        steer above or below anything an event asks them to avoid."""
-        fish = self.fish
-        for i, a in enumerate(fish):
-            for b in fish[i + 1:]:
-                if (a.leader or a) is (b.leader or b):
-                    continue  # the same school
-                # Compare centers, doubled to stay in whole sprite sizes
-                if (abs(2 * (a.x - b.x) + a.w - b.w) < a.w + b.w + 4
-                        and abs(2 * (a.y - b.y) + a.h - b.h) < a.h + b.h + 2):
-                    up = -1 if 2 * a.y + a.h < 2 * b.y + b.h else 1  # a is above b
-                    for f, away in ((a.leader or a, up), (b.leader or b, -up)):
-                        f.target_y = min(max(f.y + 3 * away, f.top), f.bottom)
-        if not self.event:
-            return
-        for left, top, right, bottom in self.event.obstacles():
-            for f in fish:
-                if f.leader:
-                    continue
-                # The fish and its school, and the water just ahead of them,
-                # so they start to steer in time
-                near = f.x - f.spread[0] - (3 if f.facing > 0 else OBSTACLE_LOOK)
-                far = f.x + f.w + f.spread[1] + (OBSTACLE_LOOK if f.facing > 0 else 3)
-                if (near < right and far > left
-                        and f.y - f.stack[0] < bottom + 1 and f.y + f.h + f.stack[1] > top - 1):
-                    # Whichever way round is shorter, if there's room
-                    above, below = top - 2 - f.h - f.stack[1], bottom + 2 + f.stack[0]
-                    go = above if f.y + f.h / 2 < (top + bottom) / 2 and above >= f.top else below
-                    f.target_y = min(max(go, f.top), f.bottom)
 
 
 SCENE = Aquarium

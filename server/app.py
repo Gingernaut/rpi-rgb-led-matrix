@@ -20,6 +20,7 @@ ANIMATIONS = {
     "fireworks": "fireworks.py",
     "reaction-diffusion": "reaction_diffusion.py",
     "aquarium": "aquarium.py",
+    "aquarium-night": "aquarium_night.py",
     "iss": "iss.py",
 }
 
