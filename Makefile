@@ -6,8 +6,9 @@ RGB_LIBRARY_NAME=rgbmatrix
 RGB_LIBRARY=$(RGB_LIBDIR)/lib$(RGB_LIBRARY_NAME).a
 
 # Some language bindings.
-# Python is now handled by scikit-build-core and cmake, not here.
-# PYTHON_LIB_DIR=bindings/python
+# Upstream builds Python via scikit-build-core and cmake; this fork keeps the
+# in-place setup.py build (build-python) that the matrix deploy relies on.
+PYTHON_LIB_DIR=bindings/python
 CSHARP_LIB_DIR=bindings/c\#
 
 all : $(RGB_LIBRARY)
@@ -31,6 +32,12 @@ uninstall:
 build-csharp:
 	$(MAKE) -C $(CSHARP_LIB_DIR) nuget
 	$(MAKE) -C $(CSHARP_LIB_DIR) build
+
+build-python: $(RGB_LIBRARY)
+	$(MAKE) -C $(PYTHON_LIB_DIR) build
+
+install-python: build-python
+	$(MAKE) -C $(PYTHON_LIB_DIR) install
 
 FORCE:
 .PHONY: FORCE install uninstall

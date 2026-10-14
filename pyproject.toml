@@ -4,15 +4,20 @@ version = "0.1.0"
 description = "API server for controlling an RGB LED matrix display on Raspberry Pi"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.129.2",
-    "uvicorn[standard]>=0.41.0",
-    "spotipy>=2.24",
-    "Pillow>=10.0",
-    "requests>=2.31",
-    "cachetools>=5.3",
-    "setuptools>=69.0",
+    "fastapi>=0.143.0",
+    "uvicorn[standard]>=0.54.0",
+    "spotipy>=2.26",
+    "Pillow>=12.3",
+    "requests>=2.34",
+    "cachetools>=7.2",
+    "setuptools>=84.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Ship the in-place rgbmatrix bindings so the editable install puts
+# bindings/python on sys.path (hatchling's heuristics no longer find it).
+[tool.hatch.build.targets.wheel]
+packages = ["bindings/python/rgbmatrix"]
