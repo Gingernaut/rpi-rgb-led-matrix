@@ -38,6 +38,9 @@ public:
   // Return height of font in pixels. Returns -1 if font has not been loaded.
   int height() const { return font_height_; }
 
+  // Return width of font in pixels. Returns -1 if font has not been loaded.
+  int width() const { return font_width_; }
+
   // Return baseline. Pixels from the topline to the baseline.
   int baseline() const { return base_line_; }
 
@@ -80,6 +83,7 @@ private:
   void parseLine(const char* buffer, Glyph* &current_glyph, uint32_t &codepoint, Glyph &tmp, int &row);
 
   int font_height_;
+  int font_width_;
   int base_line_;
   CodepointGlyphMap glyphs_;
 };
@@ -136,6 +140,12 @@ int DrawText(Canvas *c, const Font &font, int x, int y, const Color &color,
 int VerticalDrawText(Canvas *c, const Font &font, int x, int y,
                      const Color &color, const Color *background_color,
                      const char *utf8_text, int kerning_offset = 0);
+
+// Figure out how many pixels long a bit of text will be when drawn
+// Useful for aligning text to the center or right
+// Return value will be the length of the text in pixels
+//     (ie. the width for normal horizontal text)
+int MeasureText(const Font &font, const char *utf8_text, int kerning_offset = 0);
 
 // Draw a circle centered at "x", "y", with a radius of "radius" and with "color"
 void DrawCircle(Canvas *c, int x, int y, int radius, const Color &color);

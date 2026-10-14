@@ -99,6 +99,8 @@ public:
                        int dither_bits,
                        int row_address_type);
   static void InitializePanels(GPIO *io, const char *panel_type, int columns);
+  // Reset internal static globals so InitGPIO() can re-run with new params.
+  static void ResetGlobals();
 
   // Set PWM bits used for output. Default is 11, but if you only deal with
   // simple comic-colors, 1 might be sufficient. Lower require less CPU.
@@ -132,6 +134,17 @@ public:
   void Clear();
   void Fill(uint8_t red, uint8_t green, uint8_t blue);
   void SubFill(int x, int y, int width, int height, uint8_t red, uint8_t green, uint8_t blue);
+
+  const struct HardwareMapping &hardware_mapping() const {
+    return *hardware_mapping_;
+  }
+  int columns() const { return columns_; }
+  int scan_mode() const { return scan_mode_; }
+  int double_rows() const { return double_rows_; }
+  const gpio_bits_t *RowDataAt(int double_row, int bit) const {
+    return &bitplane_buffer_[double_row * (columns_ * kBitPlanes)
+                             + bit * columns_];
+  }
 
 private:
   static const struct HardwareMapping *hardware_mapping_;

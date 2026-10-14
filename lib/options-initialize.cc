@@ -37,6 +37,7 @@ RuntimeOptions::RuntimeOptions() :
 #else
   gpio_slowdown(GPIO::IsPi4() ? 2 : 1),
 #endif
+  rp1_pio(0),
   daemon(0),            // Don't become a daemon by default.
   drop_privileges(1),   // Encourage good practice: drop privileges by default.
   do_gpio_init(true),
@@ -225,6 +226,16 @@ static bool FlagInit(int &argc, char **&argv,
       //-- Runtime options.
       if (ConsumeIntFlag("slowdown-gpio", it, end, &ropts->gpio_slowdown, &err))
         continue;
+      const int err_before_rp1_pio = err;
+      if (ConsumeIntFlag("rp1-pio", it, end, &ropts->rp1_pio, &err)) {
+        if (err == err_before_rp1_pio
+            && ropts->rp1_pio != 0 && ropts->rp1_pio != 1) {
+          fprintf(stderr, "%s%s=%d is outside usable range 0..1\n",
+                  OPTION_PREFIX, "rp1-pio", ropts->rp1_pio);
+          ++err;
+        }
+        continue;
+      }
       if (ropts->daemon >= 0 && ConsumeBoolFlag("daemon", it, &bool_scratch)) {
         ropts->daemon = bool_scratch ? 1 : 0;
         continue;
@@ -330,7 +341,7 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-brightness=<percent>: Brightness in percent (Default: %d).\n"
           "\t--led-scan-mode=<0..1>    : 0 = progressive; 1 = interlaced "
           "(Default: %d).\n"
-          "\t--led-row-addr-type=<0..4>: 0 = default; 1 = AB-addressed panels; 2 = direct row select; 3 = ABC-addressed panels; 4 = ABC Shift + DE direct "
+          "\t--led-row-addr-type=<0..5>: 0 = default; 1 = AB-addressed panels; 2 = direct row select; 3 = ABC-addressed panels; 4 = ABC Shift + DE direct; 5 = ABC direct "
           "(Default: 0).\n"
           "\t--led-%sshow-refresh        : %show refresh rate.\n"
           "\t--led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a\n"
@@ -362,12 +373,17 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           !d.disable_busy_waiting ? "Don't u" : "U");
 
   fprintf(out,
-          "\t--led-slowdown-gpio=<%d..4>: "
+          "\t--led-slowdown-gpio=<%d..60>: "
           "Slowdown GPIO. Needed for faster Pis/slower panels "
           "(Default: %d (2 on Pi4, 1 other)%s).\n",
           (LED_MATRIX_ALLOW_BARRIER_DELAY ? -1 : 0), r.gpio_slowdown,
           LED_MATRIX_ALLOW_BARRIER_DELAY ? "Use -1 for memory barrier approach"
                                          : "");
+  fprintf(out,
+          "\t--led-rp1-pio=<0|1>       : On Raspberry Pi 5-family boards, force the "
+          "RP1 PIO backend.\n"
+          "\t                            0=default RP1 RIO, 1=PIO (Default: %d).\n",
+          r.rp1_pio);
   if (r.daemon >= 0) {
     const bool on = (r.daemon > 0);
     fprintf(out,

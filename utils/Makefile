@@ -1,8 +1,8 @@
 include ../config.mk
 
 CXXFLAGS=-O3 $(CPU_ARCH_FLAGS) $(LTO_FLAGS) -W -Wall -Wextra -Wno-unused-parameter -D_FILE_OFFSET_BITS=64
-OBJECTS=led-image-viewer.o text-scroller.o
-BINARIES=led-image-viewer text-scroller
+OBJECTS=led-image-viewer.o text-scroller.o frame-sequence-player.o
+BINARIES=led-image-viewer text-scroller frame-sequence-player
 
 OPTIONAL_OBJECTS=video-viewer.o
 OPTIONAL_BINARIES=video-viewer
@@ -18,6 +18,9 @@ RGB_LDFLAGS+=$(CPU_ARCH_FLAGS) $(LTO_FLAGS) -L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME
 
 # Imagemagic flags, only needed if actually compiled.
 MAGICK_CXXFLAGS?=$(shell GraphicsMagick++-config --cppflags --cxxflags)
+# GraphicsMagick may export C-only warning flags (e.g. -Werror=implicit-function-declaration)
+# which are invalid for C++. Filter those out for C++ compilation.
+MAGICK_CXXFLAGS := $(filter-out -Werror=implicit-function-declaration,$(MAGICK_CXXFLAGS))
 MAGICK_LDFLAGS?=$(shell GraphicsMagick++-config --ldflags --libs)
 AV_CXXFLAGS=$(shell pkg-config --cflags  libavcodec libavformat libswscale libavutil libavdevice)
 AV_LDFLAGS=$(shell pkg-config --cflags --libs  libavcodec libavformat libswscale libavutil libavdevice)
@@ -35,6 +38,9 @@ text-scroller: text-scroller.o $(RGB_LIBRARY)
 led-image-viewer: led-image-viewer.o $(RGB_LIBRARY)
 	$(CXX) $(CXXFLAGS) led-image-viewer.o -o $@ $(LDFLAGS) $(RGB_LDFLAGS) $(MAGICK_LDFLAGS)
 
+frame-sequence-player: frame-sequence-player.o $(RGB_LIBRARY)
+	$(CXX) $(CXXFLAGS) frame-sequence-player.o -o $@ $(LDFLAGS) $(RGB_LDFLAGS) $(MAGICK_LDFLAGS)
+
 video-viewer: video-viewer.o $(RGB_LIBRARY)
 	$(CXX) $(CXXFLAGS) video-viewer.o -o $@ $(LDFLAGS) $(RGB_LDFLAGS) $(AV_LDFLAGS)
 
@@ -42,6 +48,9 @@ video-viewer: video-viewer.o $(RGB_LIBRARY)
 	$(CXX) -I$(RGB_INCDIR) $(CXXFLAGS) -c -o $@ $<
 
 led-image-viewer.o : led-image-viewer.cc
+	$(CXX) -I$(RGB_INCDIR) $(CXXFLAGS) $(MAGICK_CXXFLAGS) -c -o $@ $<
+
+frame-sequence-player.o : frame-sequence-player.cc
 	$(CXX) -I$(RGB_INCDIR) $(CXXFLAGS) $(MAGICK_CXXFLAGS) -c -o $@ $<
 
 clean:

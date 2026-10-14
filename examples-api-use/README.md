@@ -83,6 +83,9 @@ page.
 
  * [minimal-example](./minimal-example.cc) Good to get started with the API
  * [image-example](./image-example.cc) How to show an image (requires to install the graphics magic library, see in the header of that demo)
+ * Frame-sequence playback and `.fseq` export/import are provided in the
+   [utils/frame-sequence-player](../utils/frame-sequence-player.cc) utility.
+   For managed usage, see [bindings/c#/examples/FseqPlayer](../bindings/c%23/examples/FseqPlayer).
  * [text-example](./text-example.cc) Reads text from stdin and displays it.
  * [scrolling-text-example](./scrolling-text-example.cc) Scrolls a text
    given on the command-line.

@@ -153,14 +153,18 @@ public:
 
 class ZStripeMultiplexMapper : public MultiplexMapperBase {
 public:
-  ZStripeMultiplexMapper(const char *name, int even_vblock_offset, int odd_vblock_offset)
+  // tile_height is 4 for the common 1:4 scan panels; 1:5 scan panels
+  // (e.g. 40x20 outdoor modules) use 5.
+  ZStripeMultiplexMapper(const char *name, int even_vblock_offset, int odd_vblock_offset,
+                         int tile_height = 4)
   : MultiplexMapperBase(name, 2),
     even_vblock_offset_(even_vblock_offset),
-    odd_vblock_offset_(odd_vblock_offset) {}
+    odd_vblock_offset_(odd_vblock_offset),
+    tile_height_(tile_height) {}
 
   void MapSinglePanel(int x, int y, int *matrix_x, int *matrix_y) const {
     static const int tile_width = 8;
-    static const int tile_height = 4;
+    const int tile_height = tile_height_;
 
     const int vert_block_is_odd = ((y / tile_height) % 2);
 
@@ -174,6 +178,7 @@ public:
 private:
   const int even_vblock_offset_;
   const int odd_vblock_offset_;
+  const int tile_height_;
 };
 
 class CoremanMapper : public MultiplexMapperBase {
@@ -300,8 +305,10 @@ public:
  */
 class P10Outdoor1R1G1BMultiplexBase : public MultiplexMapperBase {
 public:
-  P10Outdoor1R1G1BMultiplexBase(const char *name)
-    : MultiplexMapperBase(name, 2) {}
+  // tile_height is 4 for the common 16x16 1:4 scan modules; 1:5 scan
+  // modules (e.g. 40x20) use 5.
+  P10Outdoor1R1G1BMultiplexBase(const char *name, int tile_height = 4)
+    : MultiplexMapperBase(name, 2), tile_height_(tile_height) {}
 
   void MapSinglePanel(int x, int y, int *matrix_x, int *matrix_y) const {
     const int vblock_is_odd = (y / tile_height_) % 2;
@@ -320,7 +327,7 @@ protected:
                         int even_vblock_shift, int odd_vblock_shift) const = 0;
 
   static const int tile_width_ = 8;
-  static const int tile_height_ = 4;
+  const int tile_height_;
   static const int even_vblock_offset_ = 0;
   static const int odd_vblock_offset_ = 8;
 };
@@ -342,8 +349,9 @@ protected:
 
 class P10Outdoor1R1G1BMultiplexMapper2 : public P10Outdoor1R1G1BMultiplexBase {
 public:
-  P10Outdoor1R1G1BMultiplexMapper2()
-    : P10Outdoor1R1G1BMultiplexBase("P10Outdoor1R1G1-2") {}
+  P10Outdoor1R1G1BMultiplexMapper2(const char *name = "P10Outdoor1R1G1-2",
+                                   int tile_height = 4)
+    : P10Outdoor1R1G1BMultiplexBase(name, tile_height) {}
 
 protected:
   void MapPanel(int x, int y, int *matrix_x, int *matrix_y,
@@ -580,6 +588,10 @@ static MuxMapperList *CreateMultiplexMapperList() {
   result->push_back(new P3Outdoor64x64MultiplexMapper());
   result->push_back(new DoubleZMultiplexMapper());
   result->push_back(new P4Outdoor80x40Mapper());
+  // 40x20 P10 outdoor modules with 1:5 scan: same wiring as ZnMirrorZStripe
+  // and P10Outdoor1R1G1-2 respectively, but with 5 row high tiles.
+  result->push_back(new ZStripeMultiplexMapper("ZnMirrorZStripe40x20", 4, 4, 5));
+  result->push_back(new P10Outdoor1R1G1BMultiplexMapper2("P10Outdoor1R1G1-2-40x20", 5));
   return result;
 }
 

@@ -165,7 +165,8 @@ struct RGBLedMatrixOptions {
  * dropping privileges and becoming a daemon.
  */
 struct RGBLedRuntimeOptions {
-  int gpio_slowdown;    // 0 = no slowdown.          Flag: --led-slowdown-gpio
+  int gpio_slowdown;    // 0 = no slowdown.            Flag: --led-slowdown-gpio
+  int rp1_pio;          // 0 = default RP1 RIO. 1 = RP1 PIO. Flag: --led-rp1-pio
 
   // ----------
   // If the following options are set to disabled with -1, they are not
@@ -266,6 +267,8 @@ struct RGBLedMatrix *led_matrix_create_from_options_const_argv(
  *   options.rows = 32;            // You can set defaults if you want.
  *   options.chain_length = 1;
  *   rt_options.gpio_slowdown = 4;
+ *   // To force Pi 5-family PIO from the C API:
+ *   // rt_options.rp1_pio = 1;
  *   struct RGBLedMatrix *matrix = led_matrix_create_from_options_and_rt_options(&options, &rt_options);
  *   if (matrix == NULL) {
  *      return 1;

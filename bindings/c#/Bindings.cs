@@ -77,7 +77,7 @@ internal static class Bindings
     [DllImport(Lib)]
     public static extern void led_canvas_fill(IntPtr canvas, byte r, byte g, byte b);
 
-	[DllImport(Lib)]
+    [DllImport(Lib)]
     public static extern void led_canvas_subfill(IntPtr canvas, int x, int y, int width, int height, byte r, byte g, byte b);
 
     [DllImport(Lib)]
@@ -108,4 +108,64 @@ internal static class Bindings
 
     [DllImport(Lib, EntryPoint = "content_stream_reader_rewind")]
     public static extern void content_stream_reader_rewind(IntPtr reader);
+
+    /* Frame-sequence bindings */
+    [DllImport(Lib, EntryPoint = "frame_sequence_create")]
+    public static extern IntPtr frame_sequence_create(int width, int height);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_destroy")]
+    public static extern void frame_sequence_destroy(IntPtr sequence);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_width")]
+    public static extern int frame_sequence_width(IntPtr sequence);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_height")]
+    public static extern int frame_sequence_height(IntPtr sequence);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_frame_count")]
+    public static extern nuint frame_sequence_frame_count(IntPtr sequence);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_add_frame")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool frame_sequence_add_frame(IntPtr sequence,
+                                                       byte[] rgb24,
+                                                       nuint byteCount,
+                                                       uint holdTimeUs);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_clear")]
+    public static extern void frame_sequence_clear(IntPtr sequence);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_write_to_file", CharSet = CharSet.Ansi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool frame_sequence_write_to_file(IntPtr sequence, string path);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_read_from_file", CharSet = CharSet.Ansi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool frame_sequence_read_from_file(IntPtr sequence, string path);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_play_forever")]
+    public static extern void frame_sequence_play_forever(IntPtr sequence,
+                                                           IntPtr matrix,
+                                                           IntPtr interruptReceived,
+                                                           IntPtr brightnessPercent);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_play_count")]
+    public static extern void frame_sequence_play_count(IntPtr sequence,
+                                                        IntPtr matrix,
+                                                        uint playCount,
+                                                        IntPtr interruptReceived,
+                                                        IntPtr brightnessPercent);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_play_duration")]
+    public static extern void frame_sequence_play_duration(IntPtr sequence,
+                                                           IntPtr matrix,
+                                                           uint durationMs,
+                                                           IntPtr interruptReceived,
+                                                           IntPtr brightnessPercent);
+
+    [DllImport(Lib, EntryPoint = "frame_sequence_play")]
+    public static extern void frame_sequence_play(IntPtr sequence,
+                                                  IntPtr matrix,
+                                                  IntPtr interruptReceived,
+                                                  IntPtr brightnessPercent);
 }

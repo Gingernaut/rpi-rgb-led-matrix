@@ -110,6 +110,21 @@
             ]
         },
         {
+            "label": "Remote build C++ API (lib only)",
+            "type": "shell",
+            "command": "ssh",
+            "args": [
+                "${env:RGBLEDMATRIX_REMOTE_MACHINE}",
+                "cd ${env:RGBLEDMATRIX_REMOTE_DIR}&&",
+                "make -C lib"
+            ],
+            "problemMatcher": [],
+            "group": "build",
+            "dependsOn": [
+                "Sync C++"
+            ]
+        },
+        {
             "label": "Deploy C++",
             "type": "shell",
             "command": "ssh",
