@@ -9,13 +9,13 @@ dependencies = [
     "spotipy>=2.26",
     "Pillow>=12.3",
     "requests>=2.34",
-    "cachetools>=7.2",
     "setuptools>=84.0",
 ]
 
 [tool.uv]
-# The server runs as root with PYTHONDONTWRITEBYTECODE, so compile at sync time
-# (as the normal user) instead of on every display start.
+# The server runs as root with PYTHONDONTWRITEBYTECODE, so compile the installed
+# packages at sync time (as the normal user) instead of on every display start.
+# (Only site-packages; the project's own few modules still compile at startup.)
 compile-bytecode = true
 
 [build-system]

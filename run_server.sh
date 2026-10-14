@@ -70,7 +70,7 @@ function main() {
         # sync, PYTHONDONTWRITEBYTECODE stops root-owned __pycache__ dirs.
         exec sudo --preserve-env PYTHONDONTWRITEBYTECODE=1 uv run --no-sync uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     else
-        exec uv run uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
+        exec uv run --locked uvicorn server.app:app --host "${HOST}" --port "${PORT}" ${RELOAD}
     fi
 }
 

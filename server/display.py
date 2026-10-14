@@ -8,7 +8,6 @@ from pathlib import Path
 from server.config import DisplayConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BINDINGS_DIR = str(PROJECT_ROOT / "bindings" / "python")
 
 
 class DisplayManager:
@@ -49,7 +48,8 @@ class DisplayManager:
         extra_args: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> int:
-        """Start a Python display script using the current interpreter."""
+        """Start a Python display script using the current interpreter. The
+        project's editable install puts the rgbmatrix bindings on its path."""
         with self._lock:
             self.stop()
             script_path = str(PROJECT_ROOT / script)
@@ -58,11 +58,7 @@ class DisplayManager:
                 + self._config.to_python_args()
                 + (extra_args or [])
             )
-            # Add rgbmatrix bindings to PYTHONPATH so the C extension is importable
-            python_path = os.environ.get("PYTHONPATH", "")
-            if BINDINGS_DIR not in python_path:
-                python_path = f"{BINDINGS_DIR}:{python_path}" if python_path else BINDINGS_DIR
-            proc_env = {**os.environ, "PYTHONPATH": python_path, **(env or {})}
+            proc_env = {**os.environ, **(env or {})}
             self._process = subprocess.Popen(
                 full_cmd, cwd=PROJECT_ROOT, env=proc_env, start_new_session=True,
             )
