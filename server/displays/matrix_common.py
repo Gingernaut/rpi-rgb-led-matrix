@@ -95,6 +95,10 @@ def run_display(run: Callable[[], None], cleanup: Callable[[], None] | None = No
 # RGB bytes (width * height * 3): a bytes/bytearray, or a flat C-contiguous
 # uint8 numpy array. Scenes keep time by counting frames, not by the clock, so
 # preview.py can render and time them off the Pi.
+#
+# Scenes run for weeks, so keep ever-growing values bounded: wrap a time-based
+# phase (t % TAU) in float64 before it meets a float32 array, or float32
+# rounding makes the motion stutter after days of uptime.
 
 
 def run_scene(scene_class, description: str) -> None:

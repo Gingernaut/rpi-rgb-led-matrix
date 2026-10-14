@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=32)
     parser.add_argument("--seed", type=int, help="seed random (and numpy's) for a repeatable run")
     parser.add_argument("--seconds", type=float, default=10.0, help="GIF length")
-    parser.add_argument("--skip", type=float, default=0.0, help="seconds to run before recording")
+    parser.add_argument("--skip", type=float, default=0.0, help="seconds to run before recording or timing")
     parser.add_argument("--zoom", type=int, default=8, help="GIF pixels per LED")
     parser.add_argument("--out", help="GIF path (default: MODE.gif)")
     parser.add_argument("--bench", type=int, metavar="FRAMES", help="time this many frames instead")
@@ -44,6 +44,9 @@ def main() -> None:
     period = scene_class.FRAME_SECONDS
     frame_bytes = args.width * args.height * 3
 
+    for _ in range(round(args.skip / period)):
+        scene.frame()
+
     if args.bench:
         times = []
         for _ in range(args.bench):
@@ -60,8 +63,6 @@ def main() -> None:
 
     from PIL import Image
 
-    for _ in range(round(args.skip / period)):
-        scene.frame()
     frames = []
     for _ in range(round(args.seconds / period)):
         data = bytes(scene.frame())
