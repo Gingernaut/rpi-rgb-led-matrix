@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Game of Life with two competing species and glowing trails.
+"""Game of Life with three competing species and glowing trails.
 
 Each board seeds one small patch of random cells per species on a
-wrap-around board, and the two grow into each other. Standard Life rules
-count all live neighbors regardless of species; a newborn cell takes the
-majority species of its three parents. Newborns fade in over their
+wrap-around board, and they grow into each other. Standard Life rules count
+all live neighbors regardless of species; a newborn cell takes the majority
+species of its three parents (a random one when all three differ). Newborns fade in over their
 generation and dead cells fade out, so the board flows rather than stepping.
 When the board dies down, settles into a repeating loop, or runs too long,
 it fades out and a new one fades in with new colors.
@@ -25,13 +25,14 @@ from matrix_common import fade_lut, hsv, run_scene
 FRAME_SECONDS = 1 / 76
 FRAMES_PER_GENERATION = 5  # ~15 generations per second
 
+SPECIES = 3
+
 # Each species starts as an elliptical patch of random cells with radii
-# PATCH_RADII (x, y) before a random size jitter, the two centers
-# PATCH_SPACING of the board width apart, so they nearly touch. Together they
-# cover ~19% of a 64x32 board. (Patches further apart or smaller often settle
-# down before the species ever meet.)
-PATCH_RADII = (9.0, 7.0)
-PATCH_SPACING = 0.3
+# PATCH_RADII (x, y) before a random size jitter, the centers spread evenly
+# across the wrap-around board so each patch nearly touches the other two.
+# (Patches further apart or smaller often settle down before the species
+# ever meet.)
+PATCH_RADII = (8.0, 6.5)
 SEED_DENSITY = 0.4
 
 # Brightness kept per frame by cells that died (or a board fading out), and
@@ -49,14 +50,15 @@ STUCK_LINGER = 30
 FADE_OUT_FRAMES = 60
 FADE_IN_FRAMES = 40
 
-# Neighbors are counted for both species at once: species 1 is 1 and
-# species 2 is 16, so a 3x3 sum (at most 9 * 16) fits a byte with each
-# species' count in its own 4 bits. These tables turn that packed sum into
-# the total count and the majority species of three parents.
-SPECIES_BITS = np.array([0, 1, 16], dtype=np.uint8)
-_packed = np.arange(256)
-NEIGHBORS = ((_packed & 15) + (_packed >> 4)).astype(np.uint8)
-MAJORITY = np.where(_packed >> 4 >= 2, 2, 1).astype(np.uint8)
+# Neighbors are counted for all species at once: species s is the bit
+# 1 << 4 * (s - 1), so summing a cell's neighbors leaves each species' count
+# (at most 8) in its own 4 bits. These tables turn that packed sum into the
+# total count and the majority species of three parents (0 for a three-way
+# tie, one parent of each species).
+SPECIES_BITS = np.array([0] + [1 << 4 * s for s in range(SPECIES)], dtype=np.uint16)
+_counts = np.stack([(np.arange(1 << 4 * SPECIES) >> 4 * s) & 15 for s in range(SPECIES)])
+NEIGHBORS = _counts.sum(axis=0).astype(np.uint8)
+MAJORITY = np.where(_counts.max(axis=0) >= 2, _counts.argmax(axis=0) + 1, 0).astype(np.uint8)
 
 TRAIL_LUT = np.frombuffer(fade_lut(TRAIL_FADE, TRAIL_CUTOFF), dtype=np.uint8)
 # Newborn brightness on each frame of their generation, reaching full at the end
@@ -64,10 +66,10 @@ NEWBORN_RAMP = [(i + 1) / FRAMES_PER_GENERATION for i in range(FRAMES_PER_GENERA
 
 
 def species_palette() -> np.ndarray:
-    """Two well-separated vivid colors, as (3, 3) uint8 indexed by species
-    (0 is empty: black)."""
+    """SPECIES well-separated vivid colors, random each board, as
+    (SPECIES + 1, 3) uint8 indexed by species (0 is empty: black)."""
     base = random.random()
-    hues = (base, base + random.uniform(0.35, 0.65))
+    hues = [base + i / SPECIES + random.uniform(-0.05, 0.05) for i in range(SPECIES)]
     return np.array([(0, 0, 0)] + [hsv(h, random.uniform(0.85, 1.0)) for h in hues], dtype=np.uint8)
 
 
@@ -84,11 +86,11 @@ class Life:
         h, w = self.height, self.width
         self.palette = species_palette()
 
-        # A patch per species side by side, so they grow into each other;
-        # distances are measured around the wrap-around edges
+        # A patch per species, spread evenly across the board so they grow
+        # into each other; distances are measured around the wrap-around edges
         y, x = np.mgrid[0:h, 0:w]
         cx, cy = random.uniform(0, w), random.uniform(0, h)
-        centers = [(cx, cy), (cx + w * PATCH_SPACING, cy + random.uniform(-h / 4, h / 4))]
+        centers = [(cx + w * i / SPECIES, cy + random.uniform(-h / 4, h / 4)) for i in range(SPECIES)]
         self.grid = np.zeros((h, w), dtype=np.uint8)
         for species, (px, py) in enumerate(centers, start=1):
             rx, ry = (r * random.uniform(0.8, 1.2) for r in PATCH_RADII)
@@ -127,8 +129,13 @@ class Life:
         alive = self.grid > 0
         survivors = alive & ((total == 2) | (total == 3))
         born = ~alive & (total == 3)
-        # Newborns take the majority species of their three parents
-        self.grid = np.where(born, MAJORITY[packed], self.grid * survivors)
+        # Newborns take the majority species of their three parents, or a
+        # random one when all three differ
+        newborn = MAJORITY[packed]
+        tie = born & (newborn == 0)
+        if tie.any():
+            newborn[tie] = np.random.randint(1, SPECIES + 1, size=int(tie.sum()))
+        self.grid = np.where(born, newborn, self.grid * survivors)
         self.generation += 1
         self.draw_layers(survivors, born)
 
