@@ -14,6 +14,7 @@ display = DisplayManager(config)
 ANIMATIONS = {
     "wave1": "wave1.py",
     "plasma": "plasma.py",
+    "life": "life.py",
 }
 
 
