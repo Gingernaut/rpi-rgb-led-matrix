@@ -9,10 +9,9 @@ seaweed stands in front of them, and the neon tetras swim as a school.
 
 After a few quiet minutes something happens (see EVENTS): a shark cruises
 through and the fish scatter, a whale or an old submarine passes in the
-distance, a diver visits the chest with fish tagging along, or jellyfish
-drift by. Now and then a sea turtle paddles across. To try one out, AQUARIUM_EVENT
-shows just that one, a couple of seconds in and then after every
-EVENT_TEST_SECONDS of quiet:
+distance, or jellyfish drift by. Now and then a sea turtle paddles across. To try one out,
+AQUARIUM_EVENT shows just that one, a couple of seconds in and then after
+every EVENT_TEST_SECONDS of quiet:
 
     AQUARIUM_EVENT=shark uv run server/displays/preview.py aquarium --seconds 30
 
@@ -94,7 +93,6 @@ STONE = (95, 95, 100)  # the bubbler's air stone
 
 # Fish behavior around events
 FLEE_SPEED = 3.5  # times cruising speed, bolting from a shark
-SEEK_SPEED = 2.5  # at most this times cruising speed, going after a goal
 BAIT_BALL = 0.45  # a frightened school closes up to this much of its spacing
 OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
 
@@ -156,36 +154,6 @@ TURTLE_FLIPPERS = [
 ]
 TURTLE_SPEED = 0.12
 
-DIVER_PALETTE = {
-    "Y": (225, 190, 40), "K": (45, 50, 75), "C": (0, 170, 200), "H": (30, 32, 45),
-    "S": (225, 165, 125), "M": (150, 215, 255), "F": (240, 200, 30),
-}
-DIVER = [
-    [
-        "........YYYYY...",
-        "F.....YYYYYYY.HH",
-        "FFKKKKKKKKKKKHHM",
-        "F.KKKKCCCCCKKHSM",
-        "..........KK....",
-        "............KS..",
-    ],
-    [
-        "........YYYYY...",
-        "......YYYYYYY.HH",
-        "F.KKKKKKKKKKKHHM",
-        "FFKKKKCCCCCKKHSM",
-        "F.........KK....",
-        "............KS..",
-    ],
-]
-DIVER_HAND = (13, 5)  # where it holds the coin, in sprite coordinates
-DIVER_MOUTH = (15, 1)  # where its breath bubbles out
-DIVER_SPEED = 0.15
-DIVER_BREATH_SECONDS = 3.5
-DIVER_LOOK_SECONDS = 4.0  # at the open chest
-# Where curious fish keep their mouths, from the diver's middle
-DIVER_FOLLOW_SPOTS = [(-15, -6), (-14, 5), (16, -5), (15, 6), (-21, 0), (22, 1), (2, -9)]
-
 # The whale is drawn from a profile rather than a sprite, for a smooth round
 # body: its half-height at each point from the nose (0) to the fluke (1)
 WHALE_LENGTH = 44
@@ -209,7 +177,7 @@ WHALE_SHADOW = 0.12  # how much it dims the tank, passing right over
 # An old riveted submarine, facing right; frames turn the propeller
 SUB_PALETTE = {
     "Y": (245, 195, 35), "O": (235, 120, 25), "D": (185, 130, 25), "R": (200, 145, 20),
-    "P": (255, 240, 170), "S": (160, 160, 150), "X": (150, 150, 140), "L": (255, 255, 220),
+    "P": (255, 240, 170), "S": (160, 160, 150), "L": (255, 255, 220),
 }
 SUB_HULL = [
     "....................SSS.......",
@@ -225,12 +193,15 @@ SUB_HULL = [
     ".....DDDDDDDDDDDDDDDDDDDDDDD..",
     "........DDDDDDDDDDDDDDDDDD....",
 ]
-# The tail, drawn over the hull's first three columns: rudder and propeller
+# The tail, drawn over the hull's first three columns: the rudder, and the
+# propeller on its shaft, turning from blades up and down to edge on and back
 SUB_PROPS = [
-    {6: ".OX", 7: ".OX", 8: "XOO", 9: ".OX", 10: ".OX"},  # blades up and down
-    {7: "XO.", 8: "XXO", 9: "XO."},  # blades edge on
+    {6: "S.O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "S.O"},
+    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
+    {6: "..O", 7: "..O", 8: "SSO", 9: "..O", 10: "..O"},
+    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
 ]
-SUB_LAMP = (29, 7)  # the searchlight, in sprite coordinates
+SUB_LAMP = (28, 7)  # the searchlight, in sprite coordinates
 SUB_SPEED = 0.15
 SUB_BEAM = (170, 150, 25)  # added to the water by the searchlight at full strength
 SUB_BEAM_LENGTH = 26
@@ -282,8 +253,7 @@ class Sprite:
 class Fish:
     """A fish cruising back and forth, now and then pausing, turning around or
     changing depth. Given a leader, it keeps its place near that fish instead.
-    Events can send it fleeing out of view (flee/calm), after a point such as
-    a spot by the diver (goal), or slow it down (pace).
+    Events can send it fleeing out of view (flee/calm) or slow it down (pace).
 
     depth is 0 (near) to 1 (far): far fish are hazed and swim a little slower."""
 
@@ -314,7 +284,6 @@ class Fish:
         self.pause = 0
         self.fleeing = False
         self.calm_in = 0  # frames until a fleeing fish heads back
-        self.goal: tuple[float, float] | None = None  # where to bring its mouth
         self.pace = 1.0  # scales its cruising speed
         self.tight = self.tight_to = 1.0  # a leader's school spacing, eased
         if leader:
@@ -353,8 +322,6 @@ class Fish:
             self.follow()
         elif self.fleeing:
             self.bolt()
-        elif self.goal:
-            self.seek()
         else:
             self.wander()
         self.x += self.speed * self.facing
@@ -428,30 +395,6 @@ class Fish:
                 # Back toward the middle of the tank from wherever it hid
                 self.facing = 1 if self.x + self.w / 2 < self.tank_width / 2 else -1
                 self.pick_turn()
-
-    def seek(self) -> None:
-        """Swim to bring the mouth to self.goal, hovering once there."""
-        gx, gy = self.goal
-        if (gx - (self.x + self.w / 2)) * self.facing < -1:
-            # It's behind: stop, then turn around
-            want = 0.0
-            if self.speed < self.cruise * 0.3:
-                self.facing = -self.facing
-        else:
-            nose = self.x + self.w if self.facing > 0 else self.x
-            ahead = (gx - nose) * self.facing
-            want = self.cruise * max(0.0, min(SEEK_SPEED, ahead / 4))
-        self.speed += (want - self.speed) * 0.1
-        self.target_y = min(max(gy - self.h / 2, self.top), self.bottom)
-        climb = max(-0.15, min(0.15, (self.target_y - self.y) * 0.06))
-        self.vy += (climb - self.vy) * 0.2
-        self.pause = 0
-
-    def release(self) -> None:
-        """Stop going after the goal and go back to wandering."""
-        self.goal = None
-        self.target_y = self.y
-        self.pick_turn()
 
     def follow(self) -> None:
         lead = self.leader
@@ -719,7 +662,9 @@ class Whale(Event):
         view[:, cols] = water.astype(np.uint8)
 
         def blend(px: float, py: float, color: tuple) -> None:
-            px, py = round(px), round(py)
+            # The pixel the point falls in, as for the body (so it mirrors
+            # exactly when the whale faces the other way)
+            px, py = math.floor(px), math.floor(py)
             if 0 <= px < width and 0 <= py < height:
                 p = (py * width + px) * 3
                 for i in range(3):
@@ -732,12 +677,13 @@ class Whale(Event):
         blend(ex + self.facing, ey, WHALE_GLINT)
 
         # A short flipper, paddling slowly
-        rx, ry = self.body_x(0.3), self.body_y(0.3, 0.78)
-        angle = 0.6 + 0.25 * math.sin(self.beat * 0.8)
+        rx, ry = self.body_x(0.3), self.body_y(0.3, 0.85)
+        angle = 0.9 + 0.3 * math.sin(self.beat * 0.8)
         dx, dy = -math.cos(angle) * self.facing, math.sin(angle)
-        for k in range(7):
+        for k in range(5):
+            # Two pixels wide, toward the tail, down to a rounded tip
             for i in range(2 if k < 4 else 1):
-                blend(rx + dx * k, ry + dy * k - i, WHALE_FIN)
+                blend(rx + dx * k - i * self.facing, ry + dy * k, WHALE_FIN)
 
 
 class Submarine(Event):
@@ -754,11 +700,14 @@ class Submarine(Event):
         for prop in SUB_PROPS:
             rows = list(SUB_HULL)
             for row, tail in prop.items():
-                rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row][:len(tail)])) + rows[row][len(tail):]
+                rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row])) + rows[row][len(tail):]
             frames.append(rows)
         self.sprite = Sprite(SUB_PALETTE, frames, self.depth)
         self.facing = random.choice((1, -1))
-        self.x = -self.sprite.w - 2.0 if self.facing > 0 else tank.width + 2.0
+        # Far enough out that the searchlight slides into view ahead of it,
+        # rather than switching on all at once
+        lamp = self.sprite.at(0, self.facing, SUB_LAMP)
+        self.x = (-SUB_BEAM_LENGTH if self.facing > 0 else tank.width + SUB_BEAM_LENGTH) - lamp
         self.y0 = tank.floor * random.uniform(0.2, 0.42) - self.sprite.h / 2 + 3
         self.prop = 0.0
         self.frame_count = 0
@@ -771,7 +720,8 @@ class Submarine(Event):
             # A bubble churned up by the propeller
             stern = self.sprite.at(self.x, self.facing, (0, 8))
             self.tank.bubbles.append(Bubble(stern, self.y + 8 + random.uniform(-1, 1)))
-        return -self.sprite.w - 3 < self.x < self.tank.width + 3
+        # Until it's gone out the other side
+        return (self.x + self.sprite.w >= 0) if self.facing < 0 else (self.x <= self.tank.width)
 
     @property
     def y(self) -> float:
@@ -872,87 +822,6 @@ class Jellyfish(Event):
         return [(j.x - 4, j.y - 1, j.x + 4, j.y + 10) for j in self.jellies]
 
 
-class Diver(Event):
-    """A diver swims down to the chest, opens it for a look and leaves with a
-    coin, breathing out bubbles as it goes. Some of the fish tag along."""
-
-    depth = 0.3
-
-    def __init__(self, tank: "Aquarium") -> None:
-        super().__init__(tank)
-        self.sprite = Sprite(DIVER_PALETTE, DIVER, self.depth)
-        w, h = self.sprite.w, self.sprite.h
-        # It comes in on the side away from the chest, so it crosses the tank
-        chest_mid = tank.chest_x + len(CHEST[0]) / 2
-        self.facing = 1 if chest_mid > tank.width / 2 else -1
-        self.x = -w - 2.0 if self.facing > 0 else tank.width + 2.0
-        self.y = random.uniform(3, 7)
-        hand_x = DIVER_HAND[0] if self.facing > 0 else w - 1 - DIVER_HAND[0]
-        self.stops = [
-            # Hand over the chest, a little above it
-            (chest_mid - hand_x, tank.chest_y - DIVER_HAND[1] - 2, frames_for(DIVER_LOOK_SECONDS)),
-            # Out the far side, rising
-            (tank.width + 2.0 if self.facing > 0 else -w - 2.0, 2.0, 0),
-        ]
-        self.wait = 0
-        self.coin = False
-        self.kick = 0.0
-        self.breath = frames_for(1.0)
-        # The curious fish each keep their own spot around the diver
-        curious = [fish for fish in self.free_fish() if random.random() < 0.7]
-        spots = random.sample(DIVER_FOLLOW_SPOTS, len(DIVER_FOLLOW_SPOTS))
-        self.followers = {fish: (w / 2 + dx, h / 2 + dy) for fish, (dx, dy) in zip(curious, spots)}
-
-    def step(self) -> bool:
-        tank = self.tank
-        moving = 0.0
-        if self.wait:
-            self.wait -= 1
-            if not self.wait:
-                self.coin = True
-                self.stops.pop(0)
-                # Shut for a while now, not bursting open again as it leaves
-                tank.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
-        else:
-            tx, ty, look = self.stops[0]
-            dx, dy = tx - self.x, ty - self.y
-            dist = math.hypot(dx, dy)
-            moving = min(DIVER_SPEED, dist * 0.05)
-            if dist < 0.3:
-                if not look:
-                    return False
-                self.wait = look
-            else:
-                self.x += dx / dist * moving
-                self.y += dy / dist * moving
-        if self.wait:
-            tank.chest_hold = max(tank.chest_hold, 2)  # holding it open
-        # Fins kick while swimming, idle while it looks
-        self.kick = (self.kick + 0.03 + moving * 0.35) % 2
-        # A burst of breath every few seconds
-        self.breath -= 1
-        if self.breath <= 0:
-            self.breath = frames_for(DIVER_BREATH_SECONDS * random.uniform(0.85, 1.15))
-        elif self.breath < 6 and self.breath % 2 == 0:
-            tank.bubbles.append(Bubble(self.sprite.at(self.x, self.facing, DIVER_MOUTH), self.y + DIVER_MOUTH[1] - 1))
-        if tank.frame_count % 3 == 0:
-            for fish, (ox, oy) in self.followers.items():
-                fish.goal = (self.x + ox, self.y + oy)
-        return True
-
-    def end(self) -> None:
-        for fish in self.followers:
-            fish.release()
-
-    def draw(self, fb: bytearray, t: float) -> None:
-        width, height = self.tank.width, self.tank.height
-        x, y = round(self.x), round(self.y)
-        self.sprite.draw(fb, width, height, x, y, self.facing, int(self.kick))
-        if self.coin:
-            hand = round(self.sprite.at(self.x, self.facing, DIVER_HAND))
-            put(fb, width, height, hand, y + DIVER_HAND[1] + 1, CHEST_PALETTE["G"])
-
-
 class Turtle(Event):
     """A sea turtle paddles slowly across at mid-depth."""
 
@@ -985,7 +854,6 @@ EVENTS = {
     "shark": (Shark, 3),
     "whale": (Whale, 2),
     "submarine": (Submarine, 2),
-    "diver": (Diver, 2),
     "jellyfish": (Jellyfish, 2),
 }
 VISITORS = {"turtle": Turtle}  # each on its own schedule
@@ -1022,7 +890,6 @@ class Aquarium:
         self.background = render_background(width, height, self.sand_top, props)
         self.chest_lid = render_sprite(CHEST_PALETTE, CHEST_OPEN)
         self.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
-        self.chest_hold = 0  # frames an event keeps the chest open for
 
         # Seaweed spread along the floor clear of the chest and bubbler; a
         # couple of shorter ones stand in front of the fish
@@ -1132,17 +999,14 @@ class Aquarium:
         for weed in self.back_weeds:
             weed.draw(fb, width, height, t)
 
-        # Every so often the chest lid lifts and lets out a burst of bubbles;
-        # an event can hold it open too
+        # Every so often the chest lid lifts and lets out a burst of bubbles
         self.chest_timer -= 1
         if self.chest_timer <= 0:
             self.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
-        if self.chest_hold:
-            self.chest_hold -= 1
-        if self.chest_timer <= CHEST_OPEN_FRAMES or self.chest_hold:
+        elif self.chest_timer <= CHEST_OPEN_FRAMES:
             for dx, dy, color in self.chest_lid:
                 put(fb, width, height, self.chest_x + dx, self.chest_y + dy - 1, color)
-            if random.random() < (0.15 if self.chest_hold else 0.5):
+            if random.random() < 0.5:
                 bubbles.append(Bubble(self.chest_x + random.uniform(1, len(CHEST[0]) - 2), self.chest_y - 2))
 
         # The bubbler sends up a steady stream
@@ -1200,7 +1064,7 @@ class Aquarium:
             return
         for left, top, right, bottom in self.event.obstacles():
             for f in fish:
-                if f.leader or f.goal:
+                if f.leader:
                     continue
                 # The fish and its school, and the water just ahead of them,
                 # so they start to steer in time
