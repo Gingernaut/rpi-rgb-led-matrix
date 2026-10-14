@@ -473,34 +473,49 @@ def parse_forecast(data: dict) -> Forecast:
 # --- Drawing -----------------------------------------------------------------
 
 
-def splat(layer: np.ndarray, x: np.ndarray, y: np.ndarray, weight: np.ndarray, wrap: bool) -> None:
-    """Add weight at sub-pixel positions (pixel centers at integers) into a
-    2-D layer, spread bilinearly over four pixels."""
-    h, w = layer.shape
-    x0, y0 = np.floor(x), np.floor(y)
-    fx, fy = x - x0, y - y0
-    x0, y0 = x0.astype(np.int64), y0.astype(np.int64)
-    for dx, dy, share in ((0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)):
-        xi, yi = x0 + dx, y0 + dy
-        if wrap:
-            xi = xi % w
-        ok = (yi >= 0) & (yi < h) & (xi >= 0) & (xi < w)
-        np.add.at(layer, (yi[ok], xi[ok]), (weight * share)[ok])
+class Splat:
+    """Fixed sub-pixel points (pixel centers at integers), each spread
+    bilinearly over four pixels, drawn with new weights every frame."""
+
+    def __init__(self, x: np.ndarray, y: np.ndarray, height: int, width: int, wrap: bool) -> None:
+        x0, y0 = np.floor(x), np.floor(y)
+        fx, fy = x - x0, y - y0
+        x0, y0 = x0.astype(np.int64), y0.astype(np.int64)
+        index, share = [], []
+        for dx, dy, s in ((0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)):
+            xi, yi = x0 + dx, y0 + dy
+            if wrap:
+                xi = xi % width
+            ok = (yi >= 0) & (yi < height) & (xi >= 0) & (xi < width)
+            index.append(np.where(ok, yi * width + xi, 0))
+            share.append(np.where(ok, s, 0))
+        self.index = np.concatenate(index)
+        self.share = np.concatenate(share).astype(np.float32)
+        self.shape = (height, width)
+
+    def draw(self, weight) -> np.ndarray:
+        """The points with these weights (one each, or one for all), as a layer."""
+        weight = np.tile(weight, 4) if np.ndim(weight) else weight
+        layer = np.bincount(self.index, self.share * weight, self.shape[0] * self.shape[1])
+        return layer.reshape(self.shape).astype(np.float32)
 
 
-def glow(layer: np.ndarray, x: float, y: float, core: float, halo: float, wrap: bool) -> None:
+GLOW_DY, GLOW_DX = (a.ravel() for a in np.mgrid[-2:4, -2:4])
+
+
+def draw_glow(frame: np.ndarray, x: float, y: float, halo: float, core_color: np.ndarray,
+              halo_color: np.ndarray, wrap: bool) -> None:
     """A bright point with a soft halo at a sub-pixel position."""
-    h, w = layer.shape
-    cx, cy = int(math.floor(x)), int(math.floor(y))
-    for yi in range(cy - 2, cy + 4):
-        if not 0 <= yi < h:
-            continue
-        for xi in range(cx - 2, cx + 4):
-            xx = xi % w if wrap else xi
-            if not 0 <= xx < w:
-                continue
-            d2 = (xi - x) ** 2 + (yi - y) ** 2
-            layer[yi, xx] += core * math.exp(-d2 / 0.35) + halo * math.exp(-d2 / 2.5)
+    height, width = frame.shape[:2]
+    xi = GLOW_DX + math.floor(x)
+    yi = GLOW_DY + math.floor(y)
+    d2 = ((xi - x) ** 2 + (yi - y) ** 2).astype(np.float32)
+    if wrap:
+        xi = xi % width
+    ok = (yi >= 0) & (yi < height) & (xi >= 0) & (xi < width)
+    xi, yi, d2 = xi[ok], yi[ok], d2[ok]
+    frame[yi, xi] += (halo * np.exp(-d2 / 2.5))[:, None] * halo_color
+    frame[yi, xi] = np.maximum(frame[yi, xi], np.minimum(np.exp(-d2 / 0.35), 1)[:, None] * core_color)
 
 
 def map_xy(lat, lon):
@@ -570,6 +585,21 @@ def countdown(seconds: float) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
+def rgb(color) -> np.ndarray:
+    return np.array(color, np.float32)
+
+
+DOME_CENTER = 15.5
+DOME_RADIUS = 15.0
+
+
+def dome_xy(azimuth, elevation):
+    """Sky view coordinates: the zenith at the center, the horizon at the rim, north up."""
+    r = DOME_RADIUS * (90 - np.asarray(elevation)) / 90
+    a = np.radians(azimuth)
+    return DOME_CENTER + r * np.sin(a), DOME_CENTER - r * np.cos(a)
+
+
 class IssTracker:
     FRAME_SECONDS = FRAME_SECONDS
 
@@ -584,14 +614,20 @@ class IssTracker:
         self.font = BitmapFont("tom-thumb")  # 4x6's zero reads as an 8
         self.big_font = BitmapFont("7x13B")
         self.cloud_icon = np.array([[c == "#" for c in row] for row in CLOUD_ICON], dtype=np.float32)
+        self.text_cache: dict = {}
+
         self.day_colors, self.lat, self.lon = base_map()
-        self.ring_x, self.ring_y = view_ring()
-        self.home_x, self.home_y = (round(float(v)) for v in map_xy(OBSERVER_LAT, OBSERVER_LON))
         self.map_rgb = None
         self.map_time = -math.inf
+        ring_x, ring_y = view_ring()
+        ring = Splat(ring_x, ring_y, MAP_ROWS, WIDTH, wrap=True).draw(0.5)
+        self.ring = np.clip(ring, 0, 1)[..., None] * rgb(RING_COLOR)
+        self.home_x, self.home_y = (round(float(v)) for v in map_xy(OBSERVER_LAT, OBSERVER_LON))
         self.track = None
         self.track_time = -math.inf
-        self.text_cache: dict = {}
+
+        self.dome = self.draw_dome()
+        self.arc: tuple[Pass, Splat, np.ndarray, np.ndarray] | None = None
         self.sky_mix = 0.0
         self.sky_pass: Pass | None = None  # the pass the sky view shows (kept while fading out)
 
@@ -614,63 +650,55 @@ class IssTracker:
                 np.sin(self.lat) * math.sin(dec) + np.cos(self.lat) * math.cos(dec) * np.cos(self.lon - sun_lon)))
             light = np.clip((altitude + 9) / 12, 0, 1)[..., None]
             light = light * light * (3 - 2 * light)
-            night = self.day_colors * np.array(NIGHT, np.float32)
-            self.map_rgb = night + (self.day_colors - night) * light
+            night = self.day_colors * rgb(NIGHT)
+            self.map_rgb = (night + (self.day_colors - night) * light).astype(np.float32)
             self.map_time = now
         return self.map_rgb
 
     def ground_track(self, orbit: Orbit, now: float):
-        """Track points around now (map x, y, minutes from now), every few seconds."""
+        """The track around now, recomputed every few seconds: its points
+        prepared for drawing, their minutes from now, and map x (unwrapped,
+        to interpolate the ISS's position between points) and y."""
         if self.track is None or abs(now - self.track_time) > 5:
             minutes = np.arange(-TRAIL_MINUTES * 60, TRACK_MINUTES * 60 + 1, TRACK_STEP) / 60
             sky = orbit.sky(now + minutes * 60)
             ok = ~np.isnan(sky.lat)
             x, y = map_xy(sky.lat[ok], sky.lon[ok])
-            self.track = (x, y, minutes[ok])
+            self.track = (Splat(x, y, MAP_ROWS, WIDTH, wrap=True), minutes[ok], np.unwrap(x, period=WIDTH), y)
             self.track_time = now
-        x, y, minutes = self.track
-        return x, y, minutes - (now - self.track_time) / 60
+        splat, minutes, x, y = self.track
+        return splat, minutes - (now - self.track_time) / 60, x, y
 
     def draw_map(self, now: float, next_pass: Pass | None, cloud: float | None) -> np.ndarray:
         frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
-        frame[:MAP_ROWS] = self.shaded_map(now)
+        world = frame[:MAP_ROWS]
+        world[:] = self.shaded_map(now)
         t = self.frame_count * FRAME_SECONDS
 
-        # Seattle's viewing ring, livelier when a clear pass is coming up
+        # Seattle's viewing ring, pulsing when a clear pass is coming up
         soon = (next_pass is not None and next_pass.start - now < SOON_SECONDS and not clouded_out(cloud))
-        ring = np.zeros((MAP_ROWS, WIDTH), np.float32)
-        splat(ring, self.ring_x, self.ring_y, np.full(len(self.ring_x), 0.5, np.float32), wrap=True)
-        level = 1.6 + 1.2 * math.sin(t * 4) if soon else 1.0
-        frame[:MAP_ROWS] += np.clip(ring, 0, 1)[..., None] * np.array(RING_COLOR, np.float32) * level
+        world += self.ring * (1.6 + 1.2 * math.sin(t * 4) if soon else 1.0)
 
         orbit = self.feed.orbit
-        if orbit is not None:
-            x, y, minutes = self.ground_track(orbit, now)
-            trail = np.zeros((MAP_ROWS, WIDTH), np.float32)
+        track = self.ground_track(orbit, now) if orbit is not None else None
+        if track is not None and len(track[1]) > 1:
+            splat, minutes, x, y = track
             past = minutes <= 0
-            splat(trail, x[past], y[past], (1 + minutes[past] / TRAIL_MINUTES) ** 2 * 0.5, wrap=True)
-            ahead = np.zeros((MAP_ROWS, WIDTH), np.float32)
+            trail = np.where(past, np.clip(1 + minutes / TRAIL_MINUTES, 0, 1) ** 2 * 0.5, 0)
             # Dots march along the track ahead: a bright point every 3 minutes
-            phase = (minutes[~past] - t * 0.6) / 3
+            phase = (minutes - t * 0.6) / 3
             dots = np.clip(np.cos(phase * 2 * math.pi) * 3 - 2, 0, 1) * 0.6 + 0.12
-            splat(ahead, x[~past], y[~past], dots * (1 - minutes[~past] / (TRACK_MINUTES + 5)), wrap=True)
-            frame[:MAP_ROWS] += np.clip(trail, 0, 1)[..., None] * np.array(TRAIL_COLOR, np.float32)
-            frame[:MAP_ROWS] += np.clip(ahead, 0, 1)[..., None] * np.array(TRACK_COLOR, np.float32)
+            ahead = np.where(past, 0, dots * (1 - minutes / (TRACK_MINUTES + 5)))
+            world += np.minimum(splat.draw(trail), 1)[..., None] * rgb(TRAIL_COLOR)
+            world += np.minimum(splat.draw(ahead), 1)[..., None] * rgb(TRACK_COLOR)
 
         # Seattle
-        home = (0.75 + 0.25 * math.sin(t * 4)) if soon else 1.0
-        frame[self.home_y, self.home_x] = np.array(HOME_COLOR, np.float32) * home
+        world[self.home_y, self.home_x] = rgb(HOME_COLOR) * ((0.75 + 0.25 * math.sin(t * 4)) if soon else 1.0)
 
-        if orbit is not None:
-            here = orbit.sky(now)
-            if not np.isnan(here.lat[0]):
-                x, y = map_xy(here.lat[0], here.lon[0])
-                core = np.zeros((MAP_ROWS, WIDTH), np.float32)
-                halo = np.zeros((MAP_ROWS, WIDTH), np.float32)
-                glow(core, float(x), float(y), 1.0, 0.0, wrap=True)
-                glow(halo, float(x), float(y), 0.0, 0.45 + 0.15 * math.sin(t * 3), wrap=True)
-                frame[:MAP_ROWS] += halo[..., None] * np.array(HALO_COLOR, np.float32)
-                frame[:MAP_ROWS] = np.maximum(frame[:MAP_ROWS], np.clip(core, 0, 1)[..., None] * np.array(ISS_COLOR, np.float32))
+        if track is not None and len(track[1]) > 1 and track[1][0] <= 0 <= track[1][-1]:
+            _, minutes, x, y = track
+            draw_glow(world, float(np.interp(0, minutes, x)) % WIDTH, float(np.interp(0, minutes, y)),
+                      0.45 + 0.15 * math.sin(t * 3), rgb(ISS_COLOR), rgb(HALO_COLOR), wrap=True)
 
         self.draw_strip(frame, now, next_pass, cloud)
         return frame
@@ -682,37 +710,37 @@ class IssTracker:
         key = (text, id(font))
         mask = self.text_cache.get(key)
         if mask is None:
-            if len(self.text_cache) > 200:
-                self.text_cache.clear()
-            mask = self.text_cache[key] = font.render(text, proportional=True)
+            mask = font.render(text, proportional=True)
+            self.cache(key, mask)
         return mask
 
-    def line(self, parts: list) -> list[tuple[np.ndarray, tuple]]:
-        """Masks for a line of (text or icon mask, color) parts, with gaps."""
-        out = []
+    def cache(self, key, value) -> None:
+        if len(self.text_cache) > 200:
+            self.text_cache.clear()
+        self.text_cache[key] = value
+
+    def line(self, parts: list, width: int) -> np.ndarray:
+        """A line of (text or icon mask, color) parts, centered in width
+        columns, as RGB. Cached: a line's text changes at most each second."""
+        key = tuple((part if isinstance(part, str) else id(part), color) for part, color in parts) + (width,)
+        out = self.text_cache.get(key)
+        if out is not None:
+            return out
+        pieces = []
         for part, color in parts:
             if isinstance(part, str):
-                out.append((self.text(part), color))
+                mask = self.text(part)
             else:
                 # Sitting on the baseline, like the text
-                icon = np.zeros((self.font.height, part.shape[1]), np.float32)
-                icon[self.font.ascent - part.shape[0]:self.font.ascent] = part
-                out.append((icon, color))
-            out.append((np.zeros((self.font.height, 2), np.float32), (0, 0, 0)))
-        return out[:-1]
-
-    def blit_line(self, frame: np.ndarray, parts: list, y: int, x0: int, x1: int, level: float = 1.0) -> None:
-        """Draw a line of parts centered between columns x0 and x1."""
-        masks = self.line(parts)
-        width = sum(m.shape[1] for m, _ in masks)
-        x = x0 + max(0, (x1 - x0 - width) // 2)
-        for mask, color in masks:
-            w = min(mask.shape[1], x1 - x)
-            if w <= 0:
-                break
-            h = min(mask.shape[0], HEIGHT - y)
-            frame[y:y + h, x:x + w] += mask[:h, :w, None] * np.array(color, np.float32) * level
-            x += mask.shape[1]
+                mask = np.zeros((self.font.height, part.shape[1]), np.float32)
+                mask[self.font.ascent - part.shape[0]:self.font.ascent] = part
+            pieces += [mask[..., None] * rgb(color), np.zeros((self.font.height, 2, 3), np.float32)]
+        row = np.concatenate(pieces[:-1], axis=1)[:, :width]
+        out = np.zeros((self.font.height, width, 3), np.float32)
+        x = (width - row.shape[1]) // 2
+        out[:, x:x + row.shape[1]] = row
+        self.cache(key, out)
+        return out
 
     def strip_pages(self, now: float, next_pass: Pass | None, cloud: float | None) -> list[list]:
         if self.feed.orbit is None:
@@ -745,68 +773,71 @@ class IssTracker:
         index = int(t // PAGE_SECONDS) % len(pages)
         into = t % PAGE_SECONDS
         level = 1.0 if len(pages) == 1 else min(1.0, into / PAGE_FADE, (PAGE_SECONDS - into) / PAGE_FADE)
-        self.blit_line(frame, pages[index], STRIP_TOP, 0, WIDTH, level)
+        frame[STRIP_TOP:STRIP_TOP + self.font.height] += self.line(pages[index], WIDTH) * level
 
     # The sky view ---------------------------------------------------------
 
-    def draw_sky(self, now: float, p: Pass, cloud: float | None) -> np.ndarray:
-        frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
-        t = self.frame_count * FRAME_SECONDS
-        cx = cy = 15.5
-        radius = 15.0
-
-        def dome_xy(azimuth, elevation):
-            r = radius * (90 - np.asarray(elevation)) / 90
-            a = np.radians(azimuth)
-            return cx + r * np.sin(a), cy - r * np.cos(a)
-
-        # Horizon ring, with a fainter one at 45 degrees
+    def draw_dome(self) -> np.ndarray:
+        """The sky view's fixed parts: the horizon, a fainter ring at 45
+        degrees up, and the compass points just inside the rim."""
         yy, xx = np.mgrid[0:HEIGHT, 0:32]
-        dist = np.hypot(xx - cx, yy - cy)
-        dome = np.clip(1 - abs(dist - radius + 0.3), 0, 1) * 1.0 + np.clip(1 - abs(dist - radius / 2), 0, 1) * 0.2
-        frame[:, :32] += dome[..., None] * np.array((0, 45, 100), np.float32)
-        # Compass points just inside the rim (the arc draws over them)
+        dist = np.hypot(xx - DOME_CENTER, yy - DOME_CENTER)
+        rings = np.clip(1 - abs(dist - DOME_RADIUS + 0.3), 0, 1) + np.clip(1 - abs(dist - DOME_RADIUS / 2), 0, 1) * 0.2
+        dome = rings[..., None] * rgb((0, 45, 100))
         for label, (x, y), color in (("N", (14, 2), (220, 40, 40)), ("E", (27, 14), LABEL_GRAY),
                                      ("S", (14, 26), LABEL_GRAY), ("W", (2, 14), LABEL_GRAY)):
             mask = self.text(label)
-            frame[y:y + mask.shape[0], x:x + mask.shape[1]] += mask[..., None] * np.array(color, np.float32)
+            dome[y:y + mask.shape[0], x:x + mask.shape[1]] += mask[..., None] * rgb(color)
+        return dome.astype(np.float32)
+
+    def pass_arc(self, p: Pass) -> tuple[Splat, np.ndarray, np.ndarray]:
+        """The pass's arc across the dome, prepared for drawing, its points'
+        times, and their dome x and y."""
+        if self.arc is None or self.arc[0] is not p:
+            x, y = dome_xy(p.path[:, 0], p.path[:, 1])
+            times = p.path_start + np.arange(len(p.path)) * PATH_STEP
+            self.arc = (p, Splat(x, y, HEIGHT, 32, wrap=False), times, np.stack([x, y]))
+        return self.arc[1:]
+
+    def draw_sky(self, now: float, p: Pass, cloud: float | None) -> np.ndarray:
+        frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
+        sky = frame[:, :32]
+        sky[:] = self.dome
+        t = self.frame_count * FRAME_SECONDS
 
         # The pass's arc: dim where it's out of view, brighter where it's
-        # visible, brightest where the ISS has already been
-        times = p.path_start + np.arange(len(p.path)) * PATH_STEP
-        x, y = dome_xy(p.path[:, 0], p.path[:, 1])
-        arc = np.zeros((HEIGHT, 32), np.float32)
-        weight = np.where(p.path_visible, np.where(times <= now, 0.9, 0.45), 0.18)
-        splat(arc, x, y, weight * 0.6, wrap=False)
-        frame[:, :32] = np.maximum(frame[:, :32], np.clip(arc, 0, 1)[..., None] * np.array(HALO_COLOR, np.float32) * 0.6)
+        # visible, brightest where the ISS has already been (drawn over the
+        # compass points)
+        splat, times, xy = self.pass_arc(p)
+        weight = np.where(p.path_visible, np.where(times <= now, 0.9, 0.45), 0.18) * 0.6
+        np.maximum(sky, np.minimum(splat.draw(weight), 1)[..., None] * rgb(HALO_COLOR) * 0.6, out=sky)
 
-        here = self.feed.orbit.sky(now)
-        elevation, azimuth = float(here.elevation[0]), float(here.azimuth[0])
-        in_view = bool(here.visible()[0])
-        if elevation > -2:
-            x, y = dome_xy(azimuth, max(elevation, 0))
-            core = np.zeros((HEIGHT, 32), np.float32)
-            halo = np.zeros((HEIGHT, 32), np.float32)
-            glow(core, float(x), float(y), 1.0, 0.0, wrap=False)
-            glow(halo, float(x), float(y), 0.0, 0.6 + 0.25 * math.sin(t * 4), wrap=False)
-            if in_view:
-                frame[:, :32] += halo[..., None] * np.array(HALO_COLOR, np.float32)
-            color = np.array(ISS_COLOR if in_view else (110, 110, 110), np.float32)
-            frame[:, :32] = np.maximum(frame[:, :32], np.clip(core, 0, 1)[..., None] * color)
+        # The ISS, between the arc's points
+        i = (now - p.path_start) / PATH_STEP
+        up = 0 <= i <= len(times) - 1
+        nearest = min(max(round(i), 0), len(times) - 1)
+        in_view = up and bool(p.path_visible[nearest])
+        elevation = float(np.interp(i, np.arange(len(times)), p.path[:, 1]))
+        azimuth = float(p.path[nearest, 0])
+        if up:
+            x = float(np.interp(i, np.arange(len(times)), xy[0]))
+            y = float(np.interp(i, np.arange(len(times)), xy[1]))
+            draw_glow(sky, x, y, (0.6 + 0.25 * math.sin(t * 4)) if in_view else 0.0,
+                      rgb(ISS_COLOR if in_view else (110, 110, 110)), rgb(HALO_COLOR), wrap=False)
 
         # Where to look, how high, how long
-        pulse = 0.75 + 0.25 * math.sin(t * 4)
-        self.blit_line(frame, [("LOOK UP", GOLD)], 0, 32, WIDTH, pulse)
+        right = frame[:, 32:]
+        right[0:self.font.height] += self.line([("LOOK UP", GOLD)], 32) * (0.75 + 0.25 * math.sin(t * 4))
         direction = self.text(compass(azimuth if in_view or now >= p.start else p.start_azimuth), self.big_font)
-        x = 32 + (32 - direction.shape[1]) // 2
-        frame[7:7 + direction.shape[0], x:x + direction.shape[1]] += direction[..., None] * np.array(WHITE, np.float32)
+        x = (32 - direction.shape[1]) // 2
+        right[7:7 + direction.shape[0], x:x + direction.shape[1]] += direction[..., None] * rgb(WHITE)
         if now < p.start:
             status = [("IN", GRAY), (countdown(p.start - now), WHITE)]
         else:
             status = [(f"{round(max(elevation, 0))}°", CYAN), (countdown(p.end - now), WHITE)]
-        self.blit_line(frame, status, 20, 32, WIDTH)
+        right[20:20 + self.font.height] += self.line(status, 32)
         percent = "?" if cloud is None else f"{round(cloud)}%"
-        self.blit_line(frame, [(self.cloud_icon, WHITE), (percent, cloud_color(cloud))], 26, 32, WIDTH)
+        right[26:26 + self.font.height] += self.line([(self.cloud_icon, WHITE), (percent, cloud_color(cloud))], 32)
         return frame
 
     # ----------------------------------------------------------------------
