@@ -1,13 +1,13 @@
 #!/usr/bin/env python
-"""Game of Life with 2–3 competing species and glowing trails.
+"""Game of Life with two competing species and glowing trails.
 
-Each run seeds 2 or 3 species, each in its own territory, on a wrap-around
-board. Standard Life rules count all live neighbors regardless of species; a
-newborn cell takes the majority species of its three parents (a random one
-when all three differ). Newborns flash pale, live cells glow in their species
-color, and dead cells fade out slowly. When the board dies down, settles into
-a repeating loop, or runs too long, it fades out and a new one fades in with
-new colors.
+Each board seeds one small patch of random cells per species on a
+wrap-around board, and the two grow into each other. Standard Life rules
+count all live neighbors regardless of species; a newborn cell takes the
+majority species of its three parents. Newborns fade in over their
+generation and dead cells fade out, so the board flows rather than stepping.
+When the board dies down, settles into a repeating loop, or runs too long,
+it fades out and a new one fades in with new colors.
 
 Requires the rgbmatrix Python bindings (make build-python) and numpy.
 """
@@ -18,58 +18,57 @@ import numpy as np
 
 from matrix_common import fade_lut, hsv, run_scene
 
-FRAME_SECONDS = 2 / 75  # 37.5 fps; trails fade every frame
-FRAMES_PER_GENERATION = 4  # ~9 generations per second
+# One frame per panel refresh (~75 Hz), so fades are as smooth as the panel
+# allows. Slightly shorter than a refresh, so the swap sets the pace: at
+# exactly 1/75 s the schedule and the refresh drift apart and about 1% of
+# refreshes repeat a frame, a visible hitch.
+FRAME_SECONDS = 1 / 76
+FRAMES_PER_GENERATION = 5  # ~15 generations per second
 
-SEED_DENSITY = 0.35
-# Brightness kept per frame by cells that died (or a board fading out).
-# Channels that fade below TRAIL_CUTOFF go black: very dim LEDs look muddy.
-TRAIL_FADE = 0.86
+# Each species starts as an elliptical patch of random cells with radii
+# PATCH_RADII (x, y) before a random size jitter, the two centers
+# PATCH_SPACING of the board width apart, so they nearly touch. Together they
+# cover ~19% of a 64x32 board. (Patches further apart or smaller often settle
+# down before the species ever meet.)
+PATCH_RADII = (9.0, 7.0)
+PATCH_SPACING = 0.3
+SEED_DENSITY = 0.4
+
+# Brightness kept per frame by cells that died (or a board fading out), and
+# the level below which a channel goes black: very dim LEDs look muddy
+TRAIL_FADE = 0.93
 TRAIL_CUTOFF = 8
-# Newborn cells start this far toward white, easing to their species color
-NEWBORN_WHITE = 0.55
-NEWBORN_GENERATIONS = 3
-SHADES = NEWBORN_GENERATIONS + 1  # ages 0 to NEWBORN_GENERATIONS
 
 # When to start over: fewer live cells than this, a repeating pattern (still
 # lifes, oscillators, a lone glider on the torus), or MAX_GENERATIONS
 MIN_POPULATION = 12
-MAX_GENERATIONS = 2500
+MAX_GENERATIONS = 3000
 # Generations to keep showing a looping board before fading out, and frames
 # to fade the old board out and the new one in
-STUCK_LINGER = 40
-FADE_OUT_FRAMES = 45
-FADE_IN_FRAMES = 20
+STUCK_LINGER = 30
+FADE_OUT_FRAMES = 60
+FADE_IN_FRAMES = 40
 
-# Neighbors are counted for all species at once: species s is the bit
-# 1 << 4 * (s - 1), so summing a cell's neighbors leaves each species' count
-# (at most 8) in its own 4 bits. These tables turn that packed sum into the
-# total count and the majority species (0 when no species has 2 or more).
-SPECIES_BITS = np.array([0, 1, 1 << 4, 1 << 8], dtype=np.uint16)
+# Neighbors are counted for both species at once: species 1 is 1 and
+# species 2 is 16, so a 3x3 sum (at most 9 * 16) fits a byte with each
+# species' count in its own 4 bits. These tables turn that packed sum into
+# the total count and the majority species of three parents.
+SPECIES_BITS = np.array([0, 1, 16], dtype=np.uint8)
+_packed = np.arange(256)
+NEIGHBORS = ((_packed & 15) + (_packed >> 4)).astype(np.uint8)
+MAJORITY = np.where(_packed >> 4 >= 2, 2, 1).astype(np.uint8)
 
-
-def _count_tables() -> tuple[np.ndarray, np.ndarray]:
-    packed = np.arange(0x889)  # three species with up to 8 neighbors each
-    counts = np.stack([(packed >> 4 * s) & 15 for s in range(3)])
-    majority = np.where(counts.max(axis=0) >= 2, counts.argmax(axis=0) + 1, 0)
-    return counts.sum(axis=0).astype(np.uint8), majority.astype(np.uint8)
-
-
-NEIGHBORS, MAJORITY = _count_tables()
 TRAIL_LUT = np.frombuffer(fade_lut(TRAIL_FADE, TRAIL_CUTOFF), dtype=np.uint8)
+# Newborn brightness on each frame of their generation, reaching full at the end
+NEWBORN_RAMP = [(i + 1) / FRAMES_PER_GENERATION for i in range(FRAMES_PER_GENERATION)]
 
 
-def species_palette(count: int) -> np.ndarray:
-    """count well-separated vivid colors, as (count + 1, SHADES, 3) uint8
-    indexed by species (0 is empty: black) and age in generations (capped
-    at NEWBORN_GENERATIONS), so newborns start pale."""
+def species_palette() -> np.ndarray:
+    """Two well-separated vivid colors, as (3, 3) uint8 indexed by species
+    (0 is empty: black)."""
     base = random.random()
-    hues = [base + i / count + random.uniform(-0.04, 0.04) for i in range(count)]
-    colors = np.array([(0, 0, 0)] + [hsv(h, random.uniform(0.85, 1.0)) for h in hues], dtype=np.float32)
-    white = NEWBORN_WHITE * (1 - np.arange(SHADES) / NEWBORN_GENERATIONS)
-    palette = colors[:, None] + (255 - colors[:, None]) * white[:, None]
-    palette[0] = 0
-    return palette.astype(np.uint8)
+    hues = (base, base + random.uniform(0.35, 0.65))
+    return np.array([(0, 0, 0)] + [hsv(h, random.uniform(0.85, 1.0)) for h in hues], dtype=np.uint8)
 
 
 class Life:
@@ -83,25 +82,21 @@ class Life:
 
     def reseed(self) -> None:
         h, w = self.height, self.width
-        self.species_count = random.choice((2, 3))
-        # Flat, so a cell's color is row species * SHADES + age
-        self.palette = species_palette(self.species_count).reshape(-1, 3)
+        self.palette = species_palette()
 
-        # Territories: each cell belongs to the species of its nearest random
-        # center, measured around the wrap-around edges
+        # A patch per species side by side, so they grow into each other;
+        # distances are measured around the wrap-around edges
         y, x = np.mgrid[0:h, 0:w]
-        distances = []
-        for _ in range(self.species_count):
-            cy, cx = random.randrange(h), random.randrange(w)
-            dy = np.minimum(abs(y - cy), h - abs(y - cy))
-            dx = np.minimum(abs(x - cx), w - abs(x - cx))
-            distances.append(dx * dx + dy * dy)
-        territory = np.argmin(distances, axis=0).astype(np.uint8) + 1
-        alive = np.random.random((h, w)) < SEED_DENSITY
-        self.grid = territory * alive
-        # The seed shows in its species colors, not as newborns
-        self.age = np.full((h, w), NEWBORN_GENERATIONS, dtype=np.uint8)
-        self.draw_layer()
+        cx, cy = random.uniform(0, w), random.uniform(0, h)
+        centers = [(cx, cy), (cx + w * PATCH_SPACING, cy + random.uniform(-h / 4, h / 4))]
+        self.grid = np.zeros((h, w), dtype=np.uint8)
+        for species, (px, py) in enumerate(centers, start=1):
+            rx, ry = (r * random.uniform(0.8, 1.2) for r in PATCH_RADII)
+            dx = np.minimum((x - px) % w, (px - x) % w)
+            dy = np.minimum((y - py) % h, (py - y) % h)
+            patch = (dx / rx) ** 2 + (dy / ry) ** 2 <= 1
+            self.grid[patch & (np.random.random((h, w)) < SEED_DENSITY)] = species
+        self.draw_layers(self.grid > 0, np.zeros((h, w), dtype=bool))
 
         self.generation = 0
         # Hashes of every live pattern this board has shown. Life rules ignore
@@ -112,11 +107,15 @@ class Life:
         self.fading_out = 0
         self.frame_count = 0  # frames this board has been evolving
 
-    def draw_layer(self) -> None:
-        """Color the live cells (black elsewhere), once per generation."""
-        self.live = np.take(self.palette, self.grid * SHADES + self.age, axis=0)
-        # 1 per channel of an empty cell, where the trail shows; 0 where live
-        self.empty = np.repeat((self.grid == 0)[..., None], 3, axis=2).view(np.uint8)
+    def draw_layers(self, survivors: np.ndarray, born: np.ndarray) -> None:
+        """Precompute this generation's frames: survivors at full color with
+        newborns ramping up, and where the old glow may show through."""
+        solid = np.take(self.palette, self.grid * survivors, axis=0)
+        newborn = np.take(self.palette, self.grid * born, axis=0)
+        self.layers = [np.maximum(solid, (newborn * f).astype(np.uint8)) for f in NEWBORN_RAMP]
+        # 1 per channel where the trail shows (everywhere but survivors);
+        # newborns light up over any trail already there
+        self.trail_mask = np.repeat(~survivors[..., None], 3, axis=2).view(np.uint8)
 
     def step(self) -> None:
         # Sum each cell's 3x3 block (rows, then columns), less the cell itself
@@ -126,23 +125,14 @@ class Life:
         total = NEIGHBORS[packed]
 
         alive = self.grid > 0
-        survives = alive & ((total == 2) | (total == 3))
+        survivors = alive & ((total == 2) | (total == 3))
         born = ~alive & (total == 3)
-
-        # Newborns take the majority species of their three parents; with one
-        # parent of each of three species, pick one at random
-        newborn = MAJORITY[packed[born]]
-        tie = newborn == 0
-        if tie.any():
-            newborn[tie] = np.random.randint(1, 4, size=int(tie.sum()))
-
-        self.grid = self.grid * survives
-        self.grid[born] = newborn
-        self.age = np.where(survives, np.minimum(self.age + 1, NEWBORN_GENERATIONS), 0)
+        # Newborns take the majority species of their three parents
+        self.grid = np.where(born, MAJORITY[packed], self.grid * survivors)
         self.generation += 1
-        self.draw_layer()
+        self.draw_layers(survivors, born)
 
-        state = hash((survives | born).tobytes())
+        state = hash((survivors | born).tobytes())
         if self.looping_since is None and state in self.seen:
             self.looping_since = self.generation
         self.seen.add(state)
@@ -159,7 +149,7 @@ class Life:
             # New board brightening from black; it starts evolving after
             self.fading_in -= 1
             f = 1 - self.fading_in / FADE_IN_FRAMES
-            self.glow = (self.live * (f * f)).astype(np.uint8)
+            self.glow = (self.layers[-1] * (f * f)).astype(np.uint8)
             return self.glow.reshape(-1)
 
         self.glow = TRAIL_LUT[self.glow]
@@ -168,15 +158,16 @@ class Life:
             self.fading_out -= 1
             if not self.fading_out:
                 self.reseed()
-        else:
-            self.frame_count += 1
-            if self.frame_count % FRAMES_PER_GENERATION == 0:
-                self.step()
-                if self.finished():
-                    self.fading_out = FADE_OUT_FRAMES
-            if not self.fading_out:
-                self.glow = np.maximum(self.glow * self.empty, self.live)
+            return self.glow.reshape(-1)
 
+        phase = self.frame_count % FRAMES_PER_GENERATION
+        self.frame_count += 1
+        if phase == 0:
+            self.step()
+            if self.finished():
+                self.fading_out = FADE_OUT_FRAMES
+                return self.glow.reshape(-1)
+        self.glow = np.maximum(self.glow * self.trail_mask, self.layers[phase])
         return self.glow.reshape(-1)
 
 
