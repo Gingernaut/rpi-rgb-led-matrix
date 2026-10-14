@@ -56,8 +56,7 @@ def _count_tables() -> tuple[np.ndarray, np.ndarray]:
 
 
 NEIGHBORS, MAJORITY = _count_tables()
-TRAIL_LUT = np.frombuffer(fade_lut(TRAIL_FADE), dtype=np.uint8).copy()
-TRAIL_LUT[TRAIL_LUT < TRAIL_CUTOFF] = 0
+TRAIL_LUT = np.frombuffer(fade_lut(TRAIL_FADE, TRAIL_CUTOFF), dtype=np.uint8)
 
 
 def species_palette(count: int) -> np.ndarray:

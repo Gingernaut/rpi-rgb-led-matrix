@@ -43,7 +43,7 @@ RAMP_DOWN_SECONDS = 1.5
 # Values under DIM_CUTOFF are dropped, since they flicker on the panel.
 DIM_CUTOFF = 10
 FADE_LUTS = [fade_lut(f) for f in (0.3, 0.35, 0.4, 0.45)]
-CUTOFF_LUT = bytes(0 if v < DIM_CUTOFF else v for v in range(256))
+CUTOFF_LUT = fade_lut(1.0, DIM_CUTOFF)
 
 STAR_TINTS = [(255, 255, 255), (255, 255, 255), (190, 210, 255), (255, 225, 190)]
 # At warp, heads go blue-white and tails deep blue

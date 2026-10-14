@@ -152,10 +152,12 @@ def gradient(colors: list[RGB], n: int = 256, cyclic: bool = False) -> list[RGB]
     return out
 
 
-def fade_lut(factor: float) -> bytes:
+def fade_lut(factor: float, cutoff: int = 0) -> bytes:
     """Byte lookup table that scales by factor, for fading a whole framebuffer
-    at C speed: fb = fb.translate(fade_lut(0.85))."""
-    return bytes(int(v * factor) for v in range(256))
+    at C speed: fb = fb.translate(fade_lut(0.85)). Results below cutoff go to
+    0, so trails end cleanly instead of lingering at levels too dim for LEDs
+    to show well. (For numpy: np.frombuffer(fade_lut(...), np.uint8)[a].)"""
+    return bytes(0 if int(v * factor) < cutoff else int(v * factor) for v in range(256))
 
 
 def put(fb: bytearray, width: int, height: int, x: int, y: int, color: RGB) -> None:
