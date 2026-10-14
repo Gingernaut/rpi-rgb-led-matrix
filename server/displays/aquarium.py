@@ -7,9 +7,9 @@ at startup, so each frame copies a background and draws the moving things.
 Fish are drawn far to near, the far ones hazed toward the water color, some
 seaweed stands in front of them, and the neon tetras swim as a school.
 
-After a few quiet minutes something happens (see EVENTS): a shark cruises
-through and the fish scatter, a whale or an old submarine passes in the
-distance, or jellyfish drift by. Now and then a sea turtle paddles across. To try one out,
+Every minute or so something happens (see EVENTS): a shark cruises through
+and the fish scatter, a whale or an old submarine passes in the distance,
+jellyfish drift by, or a sea turtle paddles across. To try one out,
 AQUARIUM_EVENT shows just that one, a couple of seconds in and then after
 every EVENT_TEST_SECONDS of quiet:
 
@@ -99,10 +99,8 @@ OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
 # --- Events ------------------------------------------------------------------
 #
 # After EVENT_SECONDS of quiet (random within) one of EVENTS starts, picked by
-# weight and never the same one twice running; the turtle keeps its own
-# TURTLE_SECONDS of quiet. One thing happens at a time.
-EVENT_SECONDS = (120.0, 600.0)
-TURTLE_SECONDS = (180.0, 480.0)
+# weight and never the same one twice running. One thing happens at a time.
+EVENT_SECONDS = (30.0, 90.0)
 EVENT_TEST_SECONDS = 8.0  # AQUARIUM_EVENT's quiet between showings
 
 SHARK_PALETTE = {
@@ -155,12 +153,17 @@ TURTLE_FLIPPERS = [
 TURTLE_SPEED = 0.12
 
 # The whale is drawn from a profile rather than a sprite, for a smooth round
-# body: its half-height at each point from the nose (0) to the fluke (1)
-WHALE_LENGTH = 44
+# body: its half-height at each point from the nose (0) to the fluke tips (1).
+# The fluke is a whale's tail as in photos of one raised above the water: two
+# broad lobes flaring from a narrow stock, with a notch between them.
+WHALE_LENGTH = 50
 WHALE_PROFILE = (
-    [0.0, 0.02, 0.06, 0.12, 0.22, 0.35, 0.5, 0.62, 0.72, 0.8, 0.86, 0.92, 0.97, 1.0],
-    [0.0, 2.6, 4.0, 4.8, 5.1, 4.9, 4.0, 3.0, 2.0, 1.3, 1.0, 2.0, 3.0, 0.8],
+    [0.0, 0.018, 0.053, 0.106, 0.194, 0.308, 0.44, 0.546, 0.634, 0.704, 0.76,
+     0.8, 0.84, 0.87, 0.9, 0.93, 0.96, 1.0],
+    [0.0, 2.6, 4.0, 4.8, 5.1, 4.9, 4.0, 3.0, 2.0, 1.3, 1.0,
+     1.05, 1.4, 3.0, 4.4, 5.4, 6.1, 6.5],
 )
+WHALE_NOTCH = 0.09  # how deep the notch cuts into the fluke's trailing edge
 WHALE_HUMP = 0.6  # how much its back arches
 WHALE_SWAY = 2.0  # how far the fluke sweeps up and down
 WHALE_BACK = (40, 72, 125)  # shading down to WHALE_SIDE
@@ -609,7 +612,7 @@ class Whale(Event):
         self.blow -= 1
         if not self.blow:
             self.blow = frames_for(random.uniform(2, 4))
-            self.tank.bubbles.append(Bubble(self.body_x(0.16), float(self.edges(0.16)[0]) - 1))
+            self.tank.bubbles.append(Bubble(self.body_x(0.14), float(self.edges(0.14)[0]) - 1))
         # Until the fluke is out of view
         return (tail <= width) if self.facing > 0 else (tail >= 0)
 
@@ -622,8 +625,8 @@ class Whale(Event):
         nose (0) to the fluke tip (1)."""
         half = np.interp(s, *WHALE_PROFILE)
         # The tail sweeps up and down, more toward the fluke
-        sway = WHALE_SWAY * np.clip((s - 0.55) / 0.45, 0, 1) ** 2 * math.sin(self.beat)
-        hump = WHALE_HUMP * np.sin(np.pi * np.clip((s - 0.05) / 0.7, 0, 1))
+        sway = WHALE_SWAY * np.clip((s - 0.48) / 0.52, 0, 1) ** 2 * math.sin(self.beat)
+        hump = WHALE_HUMP * np.sin(np.pi * np.clip((s - 0.044) / 0.616, 0, 1))
         center = self.y + sway
         return center - half * 0.9 - hump, center + half * 1.1
 
@@ -645,16 +648,20 @@ class Whale(Event):
         top, bottom = self.edges(s)
         y = np.arange(height, dtype=np.float32)[:, None] + 0.5
         cover = np.clip(np.minimum(y - top, bottom - y) + 0.5, 0, 1) * WHALE_OPACITY
+        # The notch between the fluke's lobes: the trailing edge runs nearly
+        # straight across the lobes and dips in to a point between them
+        notch = (bottom - top) / 2 * (1 - np.sqrt(np.clip((1 - s) / WHALE_NOTCH, 0, 1)))
+        cover *= np.clip(np.abs(y - (top + bottom) / 2) - notch + 0.5, 0, 1)
         # Darker on top shading lighter down the side, a pale striped belly,
         # and a smile curving up toward the eye
         v = (y - top) / np.maximum(bottom - top, 0.1)
         side = np.clip(v * 1.6, 0, 1)[..., None]
         color = np.array(WHALE_BACK, np.float32) * (1 - side) + np.array(WHALE_SIDE, np.float32) * side
-        pale = (v > 0.62) & (s < 0.6)
+        pale = (v > 0.62) & (s < 0.53)
         color[pale] = WHALE_BELLY
         color[pale & (np.arange(height)[:, None] % 2 == 0)] = WHALE_PLEAT
-        smile = 0.64 - 0.24 * (s / 0.17) ** 2
-        color[(np.abs(v - smile) * (bottom - top) < 0.5) & (s > 0.05) & (s < 0.17)] = WHALE_LINE
+        smile = 0.64 - 0.24 * (s / 0.15) ** 2
+        color[(np.abs(v - smile) * (bottom - top) < 0.5) & (s > 0.044) & (s < 0.15)] = WHALE_LINE
 
         view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
         water = view[:, cols].astype(np.float32)
@@ -671,13 +678,13 @@ class Whale(Event):
                     fb[p + i] = int(fb[p + i] + (color[i] - fb[p + i]) * WHALE_OPACITY)
 
         # A big eye with a glint
-        ex, ey = self.body_x(0.24), self.body_y(0.24, 0.36)
+        ex, ey = self.body_x(0.21), self.body_y(0.21, 0.36)
         blend(ex, ey, WHALE_LINE)
         blend(ex, ey + 1, WHALE_LINE)
         blend(ex + self.facing, ey, WHALE_GLINT)
 
         # A short flipper, paddling slowly
-        rx, ry = self.body_x(0.3), self.body_y(0.3, 0.85)
+        rx, ry = self.body_x(0.264), self.body_y(0.264, 0.85)
         angle = 0.9 + 0.3 * math.sin(self.beat * 0.8)
         dx, dy = -math.cos(angle) * self.facing, math.sin(angle)
         for k in range(5):
@@ -855,8 +862,8 @@ EVENTS = {
     "whale": (Whale, 2),
     "submarine": (Submarine, 2),
     "jellyfish": (Jellyfish, 2),
+    "turtle": (Turtle, 2),
 }
-VISITORS = {"turtle": Turtle}  # each on its own schedule
 
 
 class Aquarium:
@@ -935,23 +942,21 @@ class Aquarium:
         self.frame_count = 0
 
         # Events: the one under way (if any), and the quiet frames left before
-        # the next event and the next visitor
+        # the next one starts
         self.event: Event | None = None
         self.last_event = None
         self.only = os.environ.get("AQUARIUM_EVENT")
-        if self.only and self.only not in EVENTS and self.only not in VISITORS:
-            raise SystemExit(f"AQUARIUM_EVENT must be one of {', '.join([*EVENTS, *VISITORS])}")
+        if self.only and self.only not in EVENTS:
+            raise SystemExit(f"AQUARIUM_EVENT must be one of {', '.join(EVENTS)}")
         self.event_wait = frames_for(2.0 if self.only else random.uniform(*EVENT_SECONDS))
-        self.visitor_wait = frames_for(random.uniform(*TURTLE_SECONDS))
         self.shade_luts: dict[int, bytes] = {}
 
     def start(self, name: str) -> None:
-        """Begin the named event (from EVENTS or VISITORS) now, cutting short
-        any under way."""
+        """Begin the named event (from EVENTS) now, cutting short any under
+        way."""
         if self.event:
             self.event.end()
-        event_class = EVENTS[name][0] if name in EVENTS else VISITORS[name]
-        self.event = event_class(self)
+        self.event = EVENTS[name][0](self)
 
     def direct(self) -> None:
         """Run the event under way, or count down the quiet to the next."""
@@ -967,15 +972,11 @@ class Aquarium:
                 self.start(self.only)
             return
         self.event_wait -= 1
-        self.visitor_wait -= 1
         if self.event_wait <= 0:
             self.event_wait = frames_for(random.uniform(*EVENT_SECONDS))
             names = [name for name in EVENTS if name != self.last_event]
             self.last_event = random.choices(names, [EVENTS[name][1] for name in names])[0]
             self.start(self.last_event)
-        elif self.visitor_wait <= 0:
-            self.visitor_wait = frames_for(random.uniform(*TURTLE_SECONDS))
-            self.start(random.choice(list(VISITORS)))
 
     def frame(self) -> bytearray:
         width, height = self.width, self.height
