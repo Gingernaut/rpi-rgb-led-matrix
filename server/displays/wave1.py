@@ -45,6 +45,19 @@ HUE_CYCLE_SECONDS = 60.0
 # Lower = longer trails. 0.85 gives a nice medium-length glow.
 FADE_FACTOR = 0.85
 
+# Per-channel fade lookup table: FADE_LUT[v] == int(v * FADE_FACTOR), applied to
+# the whole framebuffer at C speed with bytearray.translate().
+FADE_LUT = bytes(int(v * FADE_FACTOR) for v in range(256))
+
+# Frame period. Meteor speeds and the fade are per frame, and were tuned at the
+# old cadence: ~5 ms of work + sleep(0.02), rounded up to two refreshes of the
+# panel's 75 Hz refresh = 26.67 ms (37.5 fps). Frames follow a fixed deadline
+# schedule, so the average rate stays 37.5 fps at other refresh rates too.
+FRAME_SECONDS = 2 / 75
+# Wake this long before each deadline; SwapOnVSync then waits for the next
+# vsync. Keep it under one refresh period (13.3 ms at 75 Hz).
+VSYNC_MARGIN_SECONDS = 0.003
+
 
 def hue_to_rgb(hue: float, saturation: float = 1.0, value: float = 1.0) -> tuple[int, int, int]:
     """Convert HSV (hue 0–1, s 0–1, v 0–1) to RGB (0–255)."""
@@ -134,14 +147,14 @@ class Wave1Display:
 
     def run(self) -> None:
         canvas = self.matrix.CreateFrameCanvas()
-        delay = 0.02
         met_count = 16
         width = self.matrix.width
         height = self.matrix.height
         start_time = time.monotonic()
+        next_frame = start_time + FRAME_SECONDS
 
-        # Framebuffer for fade-trail effect: stores (r, g, b) per pixel
-        fb = [[(0, 0, 0) for _ in range(width)] for _ in range(height)]
+        # Framebuffer for the fade-trail effect: packed RGB bytes, row-major
+        fb = bytearray(width * height * 3)
 
         base_hue = 0.55  # start in the cyan/blue range
         meteors = [self.new_random_meteor(base_hue, random_x=True) for _ in range(met_count)]
@@ -151,12 +164,7 @@ class Wave1Display:
             base_hue = (0.55 + elapsed / HUE_CYCLE_SECONDS) % 1.0
 
             # Fade the entire framebuffer for streak trails
-            fade = FADE_FACTOR
-            for row in range(height):
-                fb_row = fb[row]
-                for col in range(width):
-                    r, g, b = fb_row[col]
-                    fb_row[col] = (int(r * fade), int(g * fade), int(b * fade))
+            fb = fb.translate(FADE_LUT)
 
             # Draw meteors into the framebuffer
             for i, meteor in enumerate(meteors):
@@ -171,27 +179,34 @@ class Wave1Display:
 
                 mx = meteor.x
                 my = meteor.y
-                for dx, (r, g, b) in enumerate(meteor.pixels):
-                    px = mx + dx
-                    if 0 <= px < width and 0 <= my < height:
+                if 0 <= my < height:
+                    row_base = my * width
+                    for dx in range(max(0, -mx), min(meteor.length, width - mx)):
+                        r, g, b = meteor.pixels[dx]
                         # Brightest-wins blend so overlapping meteors glow
-                        er, eg, eb = fb[my][px]
-                        fb[my][px] = (max(er, r), max(eg, g), max(eb, b))
+                        p = (row_base + mx + dx) * 3
+                        if r > fb[p]:
+                            fb[p] = r
+                        if g > fb[p + 1]:
+                            fb[p + 1] = g
+                        if b > fb[p + 2]:
+                            fb[p + 2] = b
 
                 if meteor.direction == Direction.RIGHT and mx >= width:
                     meteors[i] = self.new_random_meteor(base_hue)
                 elif meteor.direction == Direction.LEFT and mx + meteor.length <= 0:
                     meteors[i] = self.new_random_meteor(base_hue)
 
-            # Blit framebuffer to canvas
-            for row in range(height):
-                fb_row = fb[row]
-                for col in range(width):
-                    r, g, b = fb_row[col]
-                    canvas.SetPixel(col, row, r, g, b)
+            canvas.SetPixelsRGB(fb, width, height)
 
-            time.sleep(delay)
+            wait = next_frame - VSYNC_MARGIN_SECONDS - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
             canvas = self.matrix.SwapOnVSync(canvas)
+            next_frame += FRAME_SECONDS
+            now = time.monotonic()
+            if now > next_frame:  # fell a whole frame behind; don't try to catch up
+                next_frame = now + FRAME_SECONDS
 
     def cleanup(self) -> None:
         pass
