@@ -22,6 +22,7 @@ ANIMATIONS = {
     "aquarium": "aquarium.py",
     "aquarium-night": "aquarium_night.py",
     "iss": "iss.py",
+    "flights": "flights.py",
 }
 
 
