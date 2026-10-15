@@ -29,7 +29,8 @@ import random
 import numpy as np
 
 from aquarium_common import (
-    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, Event, Fish, Sprite, Tank, flip, frames_for,
+    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite, Tank, flip,
+    frames_for, submarine_frames,
 )
 from matrix_common import hsv, mix, put, put_max, run_scene, scale
 
@@ -286,23 +287,9 @@ SQUID_GLINT = (235, 235, 215)
 SQUID_KICK = 0.22  # speed gained by each jet of the mantle
 SQUID_DRAG = 0.985
 
-SUB_PALETTE = {
-    "W": (150, 155, 150), "D": (95, 100, 98), "R": (180, 40, 30), "Y": (190, 140, 40),
-    "K": (70, 70, 70), "T": (110, 110, 110), "V": (255, 200, 110), "L": (255, 250, 225),
-}
-SUB_HULL = [
-    "......RRRR.......",
-    ".....RRRRRR......",
-    "...WWWWWWWWWW....",
-    "..WWWWWWWWWWWW...",
-    ".TWWWWWWWWWWWWVL.",
-    "TTWWWWWWWWWWWWWW.",
-    ".TDDDDDDDDDDDDD..",
-    "...YYYYYYYYYYY...",
-    "...K.........K...",
-]
-SUB_THRUST = ["T.", ".T"]  # the thruster's blades, over the hull's row 4-5 tail
-SUB_LAMP = (15, 4)
+# The day tank's old submarine, darker down here with so little light to
+# catch, but for its glowing portholes and searchlight
+SUB_NIGHT_PALETTE = {ch: c if ch in "PL" else scale(c, 0.38) for ch, c in SUB_PALETTE.items()}
 SUB_SPEED = 0.12
 SUB_BEAM_LENGTH = 40
 
@@ -632,21 +619,17 @@ class Squid(Event):
 
 
 class Submersible(Event):
-    """A research submersible hums past, its lamps sweeping a cone of light
-    through the dark: inside it the water turns blue, the snow sparkles, the
-    floor and the creatures show their colors, and fish turn away."""
+    """The old submarine from the day tank putters past, its searchlight
+    sweeping a cone of light through the dark: inside it the water turns
+    blue, the snow sparkles, the floor and the creatures show their colors,
+    and fish turn away."""
 
     layer = BACK
 
     def __init__(self, tank: "NightTank") -> None:
         super().__init__(tank)
-        frames = []
-        for blades in SUB_THRUST:
-            rows = list(SUB_HULL)
-            rows[4] = blades[0] + rows[4][1:]
-            rows[5] = blades[1] + rows[5][1:]
-            frames.append(rows)
-        self.sprite = Sprite(SUB_PALETTE, frames)
+        self.sprite = Sprite(SUB_NIGHT_PALETTE, submarine_frames())
+        self.prop = 0.0
         self.facing = random.choice((1, -1))
         lamp = self.sprite.at(0, self.facing, SUB_LAMP)
         self.x = (-SUB_BEAM_LENGTH if self.facing > 0 else tank.width + SUB_BEAM_LENGTH) - lamp
@@ -661,6 +644,7 @@ class Submersible(Event):
     def step(self) -> bool:
         self.frame_count += 1
         self.x += SUB_SPEED * self.facing
+        self.prop = (self.prop + 0.3) % len(SUB_PROPS)
         tank = self.tank
         width, height = tank.width, tank.height
         # The cone of light from the lamp, angled down toward the floor and
@@ -687,7 +671,7 @@ class Submersible(Event):
 
     def draw(self, fb: bytearray, t: float) -> None:
         self.sprite.draw(fb, self.tank.width, self.tank.height, round(self.x), round(self.y),
-                         self.facing, (self.frame_count // 3) % 2)
+                         self.facing, int(self.prop))
 
 
 class Siphonophore(Event):

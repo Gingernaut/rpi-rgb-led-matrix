@@ -26,7 +26,8 @@ import random
 import numpy as np
 
 from aquarium_common import (
-    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, Event, Fish, Sprite, Tank, flip, frames_for, render_sprite, school,
+    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite, Tank, flip,
+    frames_for, render_sprite, school, submarine_frames,
 )
 from matrix_common import fade_lut, mix, put, put_max, run_scene, scale
 
@@ -222,34 +223,6 @@ WHALE_OPACITY = 0.95  # a little of the water shows through, for distance
 WHALE_SPEED = 0.16
 WHALE_SHADOW = 0.12  # how much it dims the tank, passing right over
 
-# An old riveted submarine, facing right; frames turn the propeller
-SUB_PALETTE = {
-    "Y": (245, 195, 35), "O": (235, 120, 25), "D": (185, 130, 25), "R": (200, 145, 20),
-    "P": (255, 240, 170), "S": (160, 160, 150), "L": (255, 255, 220),
-}
-SUB_HULL = [
-    "....................SSS.......",
-    "....................S.........",
-    "................OOOOSOO.......",
-    "................YYYYYYY.......",
-    "................YYPYYPY.......",
-    "........YYYYYYYYYYYYYYYYYY....",
-    ".....YYYYYYYYYYYYYYYYYYYYYYY..",
-    "....YYYYPYYYYPYYYYPYYYYPYYYYL.",
-    "...OOOOOOOOOOOOOOOOOOOOOOOOOOO",
-    "....YRYYRYYRYYRYYRYYRYYRYYRYY.",
-    ".....DDDDDDDDDDDDDDDDDDDDDDD..",
-    "........DDDDDDDDDDDDDDDDDD....",
-]
-# The tail, drawn over the hull's first three columns: the rudder, and the
-# propeller on its shaft, turning from blades up and down to edge on and back
-SUB_PROPS = [
-    {6: "S.O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "S.O"},
-    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
-    {6: "..O", 7: "..O", 8: "SSO", 9: "..O", 10: "..O"},
-    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
-]
-SUB_LAMP = (28, 7)  # the searchlight, in sprite coordinates
 SUB_SPEED = 0.15
 SUB_BEAM = (170, 150, 25)  # added to the water by the searchlight at full strength
 SUB_BEAM_LENGTH = 26
@@ -505,13 +478,7 @@ class Submarine(Event):
 
     def __init__(self, tank: "Aquarium") -> None:
         super().__init__(tank)
-        frames = []
-        for prop in SUB_PROPS:
-            rows = list(SUB_HULL)
-            for row, tail in prop.items():
-                rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row])) + rows[row][len(tail):]
-            frames.append(rows)
-        self.sprite = Sprite(SUB_PALETTE, frames, self.depth, HAZE)
+        self.sprite = Sprite(SUB_PALETTE, submarine_frames(), self.depth, HAZE)
         self.facing = random.choice((1, -1))
         # Far enough out that the searchlight slides into view ahead of it,
         # rather than switching on all at once

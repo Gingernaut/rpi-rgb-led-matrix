@@ -81,6 +81,47 @@ JELLY_FRAMES = [
 ]
 
 
+# An old riveted submarine, facing right (see submarine_frames)
+SUB_PALETTE = {
+    "Y": (245, 195, 35), "O": (235, 120, 25), "D": (185, 130, 25), "R": (200, 145, 20),
+    "P": (255, 240, 170), "S": (160, 160, 150), "L": (255, 255, 220),
+}
+SUB_HULL = [
+    "....................SSS.......",
+    "....................S.........",
+    "................OOOOSOO.......",
+    "................YYYYYYY.......",
+    "................YYPYYPY.......",
+    "........YYYYYYYYYYYYYYYYYY....",
+    ".....YYYYYYYYYYYYYYYYYYYYYYY..",
+    "....YYYYPYYYYPYYYYPYYYYPYYYYL.",
+    "...OOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "....YRYYRYYRYYRYYRYYRYYRYYRYY.",
+    ".....DDDDDDDDDDDDDDDDDDDDDDD..",
+    "........DDDDDDDDDDDDDDDDDD....",
+]
+# The tail, drawn over the hull's first three columns: the rudder, and the
+# propeller on its shaft, turning from blades up and down to edge on and back
+SUB_PROPS = [
+    {6: "S.O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "S.O"},
+    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
+    {6: "..O", 7: "..O", 8: "SSO", 9: "..O", 10: "..O"},
+    {6: "..O", 7: "S.O", 8: "SSO", 9: "S.O", 10: "..O"},
+]
+SUB_LAMP = (28, 7)  # the searchlight, in sprite coordinates
+
+
+def submarine_frames() -> list[list[str]]:
+    """The submarine's frames, the propeller turning through SUB_PROPS."""
+    frames = []
+    for prop in SUB_PROPS:
+        rows = list(SUB_HULL)
+        for row, tail in prop.items():
+            rows[row] = "".join(t if t != "." else h for t, h in zip(tail, rows[row])) + rows[row][len(tail):]
+        frames.append(rows)
+    return frames
+
+
 def frames_for(seconds: float) -> int:
     return max(1, round(seconds / FRAME_SECONDS))
 
