@@ -103,10 +103,11 @@ COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 EMERGENCIES = {"7500": "HIJACK", "7600": "NO RADIO", "7700": "EMERGENCY"}
 
 # The card's rows: the title, three lines of small text, and the dots
-TITLE_TOP = 0
+# (A cell is left clear all round the edge, two at the sides)
+TITLE_TOP = 1
 LINE_TOPS = (9, 16, 23)
 DOTS_ROW = 30
-MARGIN = 1  # columns left clear at each side
+MARGIN = 2  # columns left clear at each side
 
 WHITE = (220, 220, 220)
 DIM = (120, 120, 132)
@@ -686,12 +687,12 @@ class Flights:
         the window (south at the left); the one on the card lit."""
         span = VIEW_RIGHT - VIEW_LEFT
         for plane, distance, az in seen:
-            x = min(WIDTH - 1, max(0, round((az - VIEW_LEFT) / span * (WIDTH - 1))))
+            x = MARGIN + round(min(1.0, max(0.0, (az - VIEW_LEFT) / span)) * (WIDTH - 1 - 2 * MARGIN))
             if plane is self.current:
-                left = min(max(0, x - 1), WIDTH - 2)  # (2 wide even at an edge)
-                frame[DOTS_ROW:DOTS_ROW + 2, left:left + 2] = WHITE
+                left = min(x, WIDTH - MARGIN - 2)  # (2 wide, inside the margin)
+                frame[DOTS_ROW, left:left + 2] = WHITE
             else:
-                frame[DOTS_ROW + 1, x] = np.maximum(frame[DOTS_ROW + 1, x], FAINT)
+                frame[DOTS_ROW, x] = np.maximum(frame[DOTS_ROW, x], FAINT)
 
     # The frame ------------------------------------------------------------
 
