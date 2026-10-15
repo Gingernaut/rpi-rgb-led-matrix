@@ -2,7 +2,7 @@
 """The deep sea at night: black water with marine snow drifting down, a
 hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
 and a few deep-sea creatures, seen mostly by their own light: an anglerfish
-with its glowing lure, lanternfish and a viperfish. They take turns: only one to three are in view at
+with its glowing lure, lanternfish, a viperfish and a glowing jellyfish. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
@@ -167,6 +167,62 @@ CREATURES = {
             ],
         ],
     ),
+    "jellyfish": dict(
+        # Lit only by itself: a bell rimmed in light, pulsing as it drifts
+        # sideways, tentacles trailing behind and below
+        palette={},
+        glows={"R": (150, 120, 255), "G": (60, 50, 160), "H": (230, 120, 230), "t": (45, 36, 110)},
+        frames=[
+            [
+                "...RRR..",
+                "..RGGGR.",
+                ".RGGHGGR",
+                ".RRRRRRR",
+                ".t.t.t.t",
+                "t.t.t.t.",
+                ".t.t.t..",
+                "t.t.t...",
+                ".t.t....",
+                "t.t.....",
+            ],
+            [
+                "...RRR..",
+                "..RGGGR.",
+                "..RGHGR.",
+                "..RGGGR.",
+                "..RRRRR.",
+                ".t.t.t..",
+                "t.t.t...",
+                ".t.t....",
+                "t.t.....",
+                ".t......",
+            ],
+            [
+                "...RR...",
+                "..RGGR..",
+                "..RGHR..",
+                "..RGGR..",
+                "..RGGR..",
+                "..RRRR..",
+                ".t.t.t..",
+                "t.t.t...",
+                ".t.t....",
+                "t.t.....",
+            ],
+            [
+                "...RRR..",
+                "..RGGGR.",
+                "..RGHGR.",
+                "..RGGGR.",
+                "..RRRRR.",
+                ".t.t.t..",
+                "t.t.t...",
+                ".t.t....",
+                "t.t.....",
+                ".t......",
+            ],
+        ],
+    ),
 }
 
 # (creature, how many, cruising speeds, how high it keeps from 0 the surface
@@ -175,6 +231,7 @@ TANK = [
     ("anglerfish", 1, (0.03, 0.06), (0.3, 1.0)),
     ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8)),
     ("viperfish", 1, (0.08, 0.14), (0.1, 0.8)),
+    ("jellyfish", 1, (0.04, 0.07), (0.0, 0.7)),
 ]
 
 # The creatures take turns: ON_SCREEN of them (a school counts each fish) are
@@ -248,7 +305,8 @@ class Glower:
             for ch, c in palette.items()
         }
         # Tails ("T") and fins share a color unless the palette says otherwise
-        colors.setdefault("T", colors.get("D") or next(iter(colors.values())))
+        if colors:
+            colors.setdefault("T", colors.get("D") or next(iter(colors.values())))
         self.body, self.glows, self.lamps = [], [], []
         for rows_of in (lambda f: f, flip):
             body, glow, lamp = [], [], []
@@ -729,8 +787,8 @@ class Eruption(Event):
     """The vent wakes: its veins brighten and its glow grows as the heat
     rises, then it blows, pouring out smoke, flinging glowing embers that
     arc up and fall back, and lighting up the water around it, until it
-    dies back down to a smolder. The tube worms snatch in their plumes and
-    fish nearby turn away."""
+    dies back down to a smolder. The tube worms snatch in their plumes, and
+    the creatures bolt out of view, coming back one at a time as it cools."""
 
     layer = FRONT
 
@@ -746,6 +804,11 @@ class Eruption(Event):
 
     def end(self) -> None:
         self.tank.activity_to = 0.0
+        self.calm()
+
+    def calm(self) -> None:
+        for fish in self.free_fish():
+            fish.calm(frames_for(random.uniform(3.0, 9.0)))
 
     def step(self) -> bool:
         tank = self.tank
@@ -756,15 +819,14 @@ class Eruption(Event):
                 tank.activity_to = 1.0
                 for w in tank.worms:
                     w.hide = self.erupting + frames_for(random.uniform(1, 4))
-                vent = tank.mouths[0][0]
                 for fish in self.free_fish():
-                    if tank.in_view(fish) and abs(fish.x + fish.w / 2 - vent) < 22 \
-                            and (vent - fish.x - fish.w / 2) * fish.facing > 0:
-                        fish.turn()
+                    if tank.in_view(fish) and not fish.leaving:
+                        fish.flee(tank.mouths[0][0])
         elif self.erupting:
             self.erupting -= 1
             if not self.erupting:
                 tank.activity_to = 0.0
+                self.calm()
             # Embers flung from the mouths, the main one most
             for k, (mx, my) in enumerate(tank.mouths):
                 rate = tank.activity * (1.2 if k == 0 else 0.3)
@@ -924,7 +986,7 @@ class NightTank(Tank):
             if u.away:
                 continue
             present += self.size[id(u)]
-            if not u.leaving:
+            if not u.leaving and not u.fleeing:
                 u.visit -= 1
                 if u.visit <= 0:
                     self.leave(u)
@@ -933,7 +995,7 @@ class NightTank(Tank):
         if sum(self.size[id(u)] for u in staying) > self.crowd:
             self.leave(min(staying, key=lambda u: u.visit))
         self.entry_wait -= 1
-        if self.entry_wait <= 0:
+        if self.entry_wait <= 0 and self.activity < 0.2:
             waiting = [u for u in units if u.away and self.size[id(u)] <= self.crowd - present]
             # Someone other than the last to leave, if there's a choice
             if len(waiting) > 1 and self.last_gone in waiting:
@@ -963,6 +1025,8 @@ class NightTank(Tank):
         fish.vy = 0.0
         fish.speed = fish.cruise
         fish.pick_turn()
+        # Its lights as they should be now (they didn't change while it was away)
+        fish.glow, fish.flash = fish.glow_to, 0.0
         for f in self.fish:
             if f.leader is fish:
                 f.x, f.facing, f.speed, f.vy = fish.x + f.place[0], fish.facing, fish.cruise, 0.0
