@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """The deep sea at night: black water with marine snow drifting down, a
-hydrothermal vent smoking and glowing on the sea floor among red-plumed tube
-worms, now and then surging, and a few deep-sea creatures, seen mostly by their
+hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
+and a few deep-sea creatures, seen mostly by their
 own light: an anglerfish with its glowing lure, a pair of silver hatchetfish,
 lanternfish and a viperfish. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
@@ -13,8 +13,8 @@ background likewise has a lit version, revealed wherever light falls.
 
 Every minute or so something happens (see EVENTS): a giant squid jets past
 and the creatures put out their lights, a submersible's lamps sweep the dark,
-a siphonophore or a comb jelly drifts by, or something unseen startles the
-water into a wave of sparks. AQUARIUM_EVENT=<name> shows just that one (see
+a siphonophore or a comb jelly drifts by, something unseen startles the
+water into a wave of sparks, or the vent erupts. AQUARIUM_EVENT=<name> shows just that one (see
 aquarium_common):
 
     AQUARIUM_EVENT=squid uv run server/displays/preview.py aquarium-night --seconds 30
@@ -68,11 +68,17 @@ VENT_MOUTH = (255, 210, 110)
 VENT_GLOW = (80, 28, 4)  # added to the water by the vent's glow at full strength
 VENT_TINT = (1.0, 0.75, 0.5)  # its light is warm
 VENT_REACH = 10.0  # the glow's radius (one sigma), in pixels
-VENT_SURGE_SECONDS = (10.0, 25.0)  # between surges, when it flares and belches smoke
+VENT_REST = 0.55  # how bright its glow is while it smolders (erupting, it's 1)
 SMOKE = [  # by age: leaving the mouth glowing, lit by the vent, cooling grey
     (0.0, (230, 110, 25)), (0.12, (110, 55, 25)), (0.4, (40, 32, 30)), (1.0, (0, 0, 0)),
 ]
 SMOKE_SECONDS = (5.0, 8.0)
+
+ERUPTION_RUMBLE = 4.0  # seconds of rising heat before it blows
+ERUPTION_SECONDS = (8.0, 12.0)  # how long it erupts before dying back down
+EMBER_HOT = (255, 210, 90)
+EMBER_COOL = (190, 40, 0)
+EMBER_GRAVITY = 0.012
 
 TUBE = (140, 132, 118)
 PLUME = (215, 25, 35)
@@ -362,7 +368,7 @@ class Flake:
 
 
 class Puff:
-    __slots__ = ("x", "y", "vx", "vy", "age", "life")
+    __slots__ = ("x", "y", "vx", "vy", "age", "life", "heat")
 
 
 class Spark:
@@ -740,6 +746,78 @@ class Startle(Event):
             put_max(fb, width, height, round(s.x), round(s.y), scale(s.color, 1 - s.age / s.life))
 
 
+class Eruption(Event):
+    """The vent wakes: its veins brighten and its glow grows as the heat
+    rises, then it blows, pouring out smoke, flinging glowing embers that
+    arc up and fall back, and lighting up the water around it, until it
+    dies back down to a smolder. The tube worms snatch in their plumes and
+    fish nearby turn away."""
+
+    layer = FRONT
+
+    class Ember:
+        __slots__ = ("x", "y", "vx", "vy", "age", "life")
+
+    def __init__(self, tank: "NightTank") -> None:
+        super().__init__(tank)
+        self.rumble = frames_for(ERUPTION_RUMBLE)
+        self.erupting = frames_for(random.uniform(*ERUPTION_SECONDS))
+        self.embers: list[Eruption.Ember] = []
+        tank.activity_to = 0.35
+
+    def end(self) -> None:
+        self.tank.activity_to = 0.0
+
+    def step(self) -> bool:
+        tank = self.tank
+        if self.rumble:
+            self.rumble -= 1
+            if not self.rumble:
+                # It blows
+                tank.activity_to = 1.0
+                for w in tank.worms:
+                    w.hide = self.erupting + frames_for(random.uniform(1, 4))
+                vent = tank.mouths[0][0]
+                for fish in self.free_fish():
+                    if tank.in_view(fish) and abs(fish.x + fish.w / 2 - vent) < 22 \
+                            and (vent - fish.x - fish.w / 2) * fish.facing > 0:
+                        fish.turn()
+        elif self.erupting:
+            self.erupting -= 1
+            if not self.erupting:
+                tank.activity_to = 0.0
+            # Embers flung from the mouths, the main one most
+            for k, (mx, my) in enumerate(tank.mouths):
+                rate = tank.activity * (1.2 if k == 0 else 0.3)
+                while rate > 0:
+                    if random.random() < rate:
+                        e = Eruption.Ember()
+                        e.x, e.y = mx + 0.5, my - 0.5
+                        e.vx, e.vy = random.uniform(-0.22, 0.22), -random.uniform(0.3, 0.7)
+                        e.age, e.life = 0, frames_for(random.uniform(1.2, 2.8))
+                        self.embers.append(e)
+                    rate -= 1
+        embers = []
+        for e in self.embers:
+            e.age += 1
+            e.vy += EMBER_GRAVITY
+            e.x += e.vx
+            e.y += e.vy
+            col = int(e.x)
+            if e.age < e.life and 0 <= col < tank.width and e.y < tank.floor_top[col]:
+                embers.append(e)
+        self.embers = embers
+        # Until it's died back down
+        return bool(self.rumble or self.erupting or self.embers or tank.activity > 0.08)
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        for e in self.embers:
+            age = e.age / e.life
+            color = mix(EMBER_HOT, EMBER_COOL, min(1.0, age * 1.5))
+            put_max(fb, width, height, math.floor(e.x), math.floor(e.y), scale(color, 1 - age * age))
+
+
 # name: (event, weight when picking one at random)
 EVENTS = {
     "squid": (Squid, 3),
@@ -747,6 +825,7 @@ EVENTS = {
     "siphonophore": (Siphonophore, 2),
     "comb-jelly": (CombJelly, 2),
     "startle": (Startle, 2),
+    "eruption": (Eruption, 2),
 }
 
 
@@ -777,20 +856,21 @@ class NightTank(Tank):
         # The main mouth first: it smokes the most
         self.mouths = sorted(((self.vent_x + dx, self.vent_y + dy) for dy, row in enumerate(rows)
                               for dx, ch in enumerate(row) if ch == "M"), key=lambda m: m[1])
-        self.surge = 0.0  # how hard it's surging, 0-1
-        self.surging = 0  # frames left building a surge
-        self.surge_wait = frames_for(random.uniform(*VENT_SURGE_SECONDS))
+        # How active the vent is, from 0 smoldering to 1 erupting, easing
+        # toward activity_to (which an eruption raises)
+        self.activity = self.activity_to = 0.0
 
         # The vent's glow, centered on the main chimney a little below its
         # mouth
         yy = np.arange(height, dtype=np.float32)[:, None]
         xx = np.arange(width, dtype=np.float32)[None, :]
         glow_x, glow_y = self.mouths[0][0], self.vent_y + vent_h * 0.45
-        self.vent_light = np.exp(-((xx - glow_x) ** 2 + (yy - glow_y) ** 2) / (2 * VENT_REACH ** 2)).astype(np.float32)
+        glow = np.exp(-((xx - glow_x) ** 2 + (yy - glow_y) ** 2) / (2 * VENT_REACH ** 2)).astype(np.float32)
+        self.vent_light = glow * VENT_REST
         self.dark_bg, self.lit_bg = self.render_background()
         self.background = self.dark_bg.astype(np.uint8).tobytes()
-        # A surge brightens the water around the vent this much more
-        self.surge_glow = (np.array(VENT_GLOW, np.float32) * self.vent_light[..., None] ** 2).astype(np.float32)
+        # Erupting, it brightens the water around it this much more
+        self.eruption_glow = (np.array(VENT_GLOW, np.float32) * 1.5 * glow[..., None] ** 2).astype(np.float32)
 
         # A bed of tube worms around the vent, taller close to it
         self.worms = []
@@ -974,22 +1054,17 @@ class NightTank(Tank):
         if self.frame_count % 4 == 0:
             self.give_room()
 
-        # Every so often the vent surges: it flares and belches smoke
-        self.surge_wait -= 1
-        if self.surge_wait <= 0:
-            self.surge_wait = frames_for(random.uniform(*VENT_SURGE_SECONDS))
-            self.surging = frames_for(random.uniform(1.5, 3.0))
-        if self.surging:
-            self.surging -= 1
-            self.surge += (1 - self.surge) * 0.12
-        else:
-            self.surge *= 0.97
-        surge = self.surge
+        # The vent heats up quickly and cools slowly
+        rate = 0.04 if self.activity_to > self.activity else 0.012
+        self.activity += (self.activity_to - self.activity) * rate
+        active = self.activity
 
         # What light there is: the vent's flickering glow, the lures, and any
         # an event brings
-        flicker = (0.85 + 0.1 * math.sin(t * 1.7) + 0.05 * math.sin(t * 5.3)) * (1 + 0.35 * surge)
-        light = self.vent_light * flicker
+        flicker = 0.85 + 0.1 * math.sin(t * 1.7) + 0.05 * math.sin(t * 5.3)
+        if active > 0.3:
+            flicker += random.uniform(-0.1, 0.1) * active
+        light = self.vent_light * (flicker * (1 + 1.0 / VENT_REST * active))
         for fish in shown:
             if fish.sprite.lamps[0][0]:
                 for lx, ly in fish.lamps(t):
@@ -999,8 +1074,8 @@ class NightTank(Tank):
         if extra is not None:
             light = light + extra
             bg = self.dark_bg + (self.lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
-        if surge > 0.02:
-            bg = (self.dark_bg if bg is None else bg) + self.surge_glow * surge
+        if active > 0.02:
+            bg = (self.dark_bg if bg is None else bg) + self.eruption_glow * active
         fb = bytearray(self.background if bg is None else np.minimum(bg, 255).astype(np.uint8).tobytes())
         self.light = light
         light_rows = light.tolist()
@@ -1022,16 +1097,18 @@ class NightTank(Tank):
                 b = f.bright + int(200 * level * level)
                 put_max(fb, width, height, px, py, (b, b, min(255, b + 8)))
 
-        # Smoke billowing from the mouths, glowing as it leaves, lit by the
-        # vent as it rises, cooling grey and spreading as it climbs
+        # Smoke from the mouths, a thin wisp while it smolders and billowing
+        # when it erupts: glowing as it leaves, lit by the vent as it rises,
+        # cooling grey and spreading as it climbs
         for k, (mx, my) in enumerate(self.mouths):
-            rate = (0.7 + 2.5 * surge) if k == 0 else (0.25 + 0.8 * surge)
+            rate = (0.2 + 3.0 * active) if k == 0 else (0.07 + 1.0 * active)
             while rate > 0:
                 if random.random() < rate:
                     p = Puff()
                     p.x, p.y = mx + random.uniform(-0.5, 0.5), my - 0.5
-                    p.vx, p.vy = random.uniform(-0.03, 0.03), -random.uniform(0.11, 0.16) * (1 + 0.6 * surge)
+                    p.vx, p.vy = random.uniform(-0.03, 0.03), -random.uniform(0.07, 0.11) * (1 + 1.2 * active)
                     p.age, p.life = 0, frames_for(random.uniform(*SMOKE_SECONDS))
+                    p.heat = 0.5 + 0.5 * active
                     self.puffs.append(p)
                 rate -= 1
         current = 0.006 * math.sin(t * 0.04)  # the plume leans with a slow current
@@ -1045,20 +1122,20 @@ class NightTank(Tank):
             p.x += p.vx
             p.y += p.vy
             p.vy *= 0.997
-            color = smoke_color(p.age / p.life)
+            color = scale(smoke_color(p.age / p.life), p.heat)
             px, py = round(p.x), round(p.y)
             put_max(fb, width, height, px, py, color)
             if p.age > p.life * 0.3:
                 put_max(fb, width, height, px + 1, py, scale(color, 0.6))
         self.puffs = puffs
 
-        # The mouths and veins glowing from within, pulses of heat climbing
-        # the veins
+        # The mouths and veins glowing from within, slow pulses of heat
+        # climbing the veins, and the whole vent glowing hot as it erupts
         for mx, my in self.mouths:
-            put(fb, width, height, mx, my, scale(VENT_MOUTH, min(1.0, flicker)))
+            put(fb, width, height, mx, my, scale(VENT_MOUTH, min(1.0, (0.5 + 0.5 * active) * flicker)))
         for vx, vy in self.veins:
-            pulse = max(0.0, math.sin(t * 2.2 + (vy - self.vent_y) * 0.7 + vx * 0.3)) ** 3
-            put(fb, width, height, vx, vy, mix(VENT_DEEP, VENT_HOT, min(1.0, 0.1 + 0.9 * pulse + 0.5 * surge)))
+            pulse = max(0.0, math.sin(t * 1.3 + (vy - self.vent_y) * 0.7 + vx * 0.3)) ** 3
+            put(fb, width, height, vx, vy, mix(VENT_DEEP, VENT_HOT, min(1.0, 0.05 + 0.55 * pulse + 0.9 * active)))
 
         # Tube worms, their plumes swaying, snatched in when startled
         for w in self.worms:
