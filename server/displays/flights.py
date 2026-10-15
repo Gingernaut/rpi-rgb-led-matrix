@@ -18,8 +18,8 @@ it's close; otherwise each takes a turn):
 Positions come from adsb.fi's open ADS-B feed (no key), polled every few
 seconds; between polls each plane flies on along its reported track. Routes
 come from adsbdb, shown only when the plane is near the great circle between
-the two airports, since its routes are often out of date. A plane squawking
-an emergency code says so in red.
+the two airports and going the right way along it, since its routes are often
+out of date. A plane squawking an emergency code says so in red.
 
 Requires the rgbmatrix Python bindings (make build-python), numpy and requests.
 """
@@ -44,6 +44,9 @@ FRAME_SECONDS = 3 / REFRESH_HZ  # every 3rd refresh, ~25 fps
 # The window
 HOME_LAT, HOME_LON = 47.552, -122.265
 HOME_HEIGHT = 40.0  # meters above sea level
+# How far sea level lies above the WGS84 ellipsoid here (it's below), the
+# feed's GPS altitudes being heights above the ellipsoid
+GEOID = -22.0  # meters
 TIMEZONE = ZoneInfo("America/Los_Angeles")
 WIDTH, HEIGHT = 64, 32
 
@@ -63,14 +66,21 @@ ROUTE_GAP = 1.5  # seconds between route lookups
 ROUTE_KEEP = 7 * 86400  # how long a looked-up route is trusted
 ROUTE_KEEP_MISSING = 86400
 # Seconds to wait after a failed fetch, doubling while it keeps failing
+FEED_RETRY = 10
 FETCH_RETRY = 30
 FETCH_RETRY_MAX = 600
+CLOCK_SLACK = 60  # trust the feed's clock over ours only when they're this close
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "flights"
 USER_AGENT = "pixel-display (home LED matrix; github.com/Gingernaut/rpi-rgb-led-matrix)"
 
 # A route is shown only if the plane is within ROUTE_SLACK of the great
-# circle between its endpoints
+# circle between its endpoints, and going the right way: away from the
+# origin (not descending) when within NEAR_AIRPORT of it, toward the
+# destination (not climbing) when near that, and heading within ROUTE_TURN
+# degrees of the destination when near neither
 ROUTE_SLACK = 250_000
+NEAR_AIRPORT = 80_000
+ROUTE_TURN = 100
 
 # Each plane in view gets the card for CARD_SECONDS in turn; one within
 # CLOSE keeps it while it's that close
@@ -162,11 +172,15 @@ ROUTE_ARROW = ["#..",
                "###",
                "##.",
                "#.."]
-# Words that mark a non-airline operator as a business (a private owner's
-# name isn't shown)
-BUSINESS = re.compile(r"\b(INC|LLC|CO|CORP|CORPORATION|COMPANY|LTD|LP|AIRLINES?|AIR|AVIATION|FLIGHT|"
-                      r"UNIVERSITY|COUNTY|STATE|POLICE|SHERIFF|PATROL|NETWORK|SERVICES?|BANK|TRUST)\b")
-COMPANY_WORDS = {"inc", "llc", "co", "corp", "ltd", "lp"}
+# Words that mark a non-airline operator as a business or agency, so it's
+# not a private owner, whose name is never shown. A company suffix alone
+# isn't enough ("JOHN SMITH LLC"), unless only one word is left without it
+# ("BOEING CO"); nor is a trust, which is usually a person's.
+BUSINESS = re.compile(r"\b(AIRLINES?|AIR|AVIATION|AIRCRAFT|AEROSPACE|FLIGHT|FLYING|CHARTER|HELICOPTERS?|"
+                      r"CLUB|SCHOOL|ACADEMY|COLLEGE|UNIVERSITY|CITY|COUNTY|STATE|DEPARTMENT|POLICE|SHERIFF|"
+                      r"PATROL|FIRE|NETWORK|SERVICES?|BANK)\b")
+COMPANY_WORDS = {"inc", "llc", "co", "corp", "corporation", "company", "ltd", "lp"}
+SMALL_WORDS = {"of", "and", "the", "for", "at", "in"}
 
 
 def log(message: str) -> None:
@@ -204,10 +218,13 @@ class Plane:
         self.military = bool((report.get("dbFlags") or 0) & 1)
         self.squawk = report.get("squawk") or ""
         self.feet = report["feet"]
-        self.climb = report.get("geom_rate", report.get("baro_rate")) or 0
+        climb = report.get("geom_rate")
+        self.climb = (report.get("baro_rate") if climb is None else climb) or 0
         self.knots = report.get("gs") or 0
-        track = math.radians(report.get("track") or 0)
-        speed = self.knots * KNOTS
+        self.heading = report.get("track")  # degrees, or None when not reported
+        # (without a track it stays put rather than flying off north)
+        speed = 0 if self.heading is None else self.knots * KNOTS
+        track = math.radians(self.heading or 0)
         self.anchor = (*local(report["lat"], report["lon"]), self.feet * METERS_PER_FOOT - HOME_HEIGHT)
         self.velocity = (speed * math.sin(track), speed * math.cos(track), self.climb * FEET_PER_MINUTE)
         self.heard = report["at"]
@@ -216,32 +233,43 @@ class Plane:
         dt = now - self.heard
         return tuple(a + v * dt for a, v in zip(self.anchor, self.velocity))
 
+    def place(self) -> tuple[float, float]:
+        """Latitude and longitude at the last report."""
+        return HOME_LAT + self.anchor[1] / M_PER_LAT, HOME_LON + self.anchor[0] / M_PER_LON
+
 
 class Feed:
     """The planes nearby, polled from adsb.fi by a background thread, and
-    their routes, looked up from adsbdb when asked for. Readers take
-    `reports` (replaced whole on each poll) and `routes`."""
+    their routes, looked up from adsbdb by another when asked for. Readers
+    take `reports` (replaced whole on each poll) and route()."""
 
     def __init__(self) -> None:
         self.reports: list[dict] = []
         self.polled = 0  # counts polls, so readers see new reports
         self.polled_at = -math.inf
-        self.routes: dict[str, dict | None] = {}
-        self.route_times: dict[str, float] = {}
+        # callsign: (when looked up, route or None if adsbdb has none),
+        # replaced whole when pruned, so a reader never sees it change size
+        self.routes: dict[str, tuple[float, dict | None]] = {}
         self.wanted: list[str] = []  # callsigns to look up, most wanted first
-        self.session = requests.Session()
-        self.session.headers["User-Agent"] = USER_AGENT
+        self.wanted_lock = threading.Lock()
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.load_routes()
         threading.Thread(target=self.poll_loop, name="flights-feed", daemon=True).start()
         threading.Thread(target=self.route_loop, name="flights-routes", daemon=True).start()
 
+    @staticmethod
+    def session() -> requests.Session:
+        session = requests.Session()  # (one per thread: sessions aren't thread-safe)
+        session.headers["User-Agent"] = USER_AGENT
+        return session
+
     def poll_loop(self) -> None:
-        retry, error = FETCH_RETRY, None
+        session = self.session()
+        retry, error = FEED_RETRY, None
         while True:
             started = time.monotonic()
             try:
-                self.poll()
+                self.poll(session)
             except Exception as e:  # keep the last reports; try again later
                 message = f"{type(e).__name__}: {e}"
                 if message != error:
@@ -252,22 +280,31 @@ class Feed:
                 continue
             if error:
                 log("feed recovered")
-            retry, error = FETCH_RETRY, None
+            retry, error = FEED_RETRY, None
             time.sleep(max(0.5, POLL_SECONDS - (time.monotonic() - started)))
 
-    def poll(self) -> None:
+    def poll(self, session: requests.Session) -> None:
         url = FEED_URL.format(lat=HOME_LAT, lon=HOME_LON, dist=FEED_RADIUS_NM)
-        r = self.session.get(url, timeout=10)
+        r = session.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-        # (adsb.fi gives "now" in seconds; readsb's own format, in milliseconds)
-        now = data.get("now") or time.time()
-        if now > 1e11:
+        # (adsb.fi gives "now" in seconds; readsb's own format, in
+        # milliseconds.) Report times are kept on our clock: if the two
+        # disagree, e.g. before the Pi's clock is set, use ours.
+        received = time.time()
+        now = data.get("now")
+        if isinstance(now, (int, float)) and now > 1e11:
             now /= 1000
+        if not isinstance(now, (int, float)) or abs(now - received) > CLOCK_SLACK:
+            now = received
         reports = []
         for a in data.get("aircraft") or data.get("ac") or []:
-            feet = a.get("alt_geom", a.get("alt_baro"))
-            if not isinstance(feet, (int, float)) or feet < -300 or a.get("lat") is None or a.get("hex") is None:
+            # Prefer the GPS altitude (true height, from the ellipsoid) to the
+            # barometric one (off by hundreds of feet with the weather)
+            geom, baro = a.get("alt_geom"), a.get("alt_baro")
+            feet = geom - GEOID / METERS_PER_FOOT if isinstance(geom, (int, float)) else baro
+            if (baro == "ground" or not isinstance(feet, (int, float)) or feet < -300
+                    or a.get("lat") is None or a.get("lon") is None or a.get("hex") is None):
                 continue  # on the ground, or no position
             seen = a.get("seen_pos", 0) or 0
             if seen > STALE_SECONDS:
@@ -282,101 +319,150 @@ class Feed:
     # Routes ---------------------------------------------------------------
 
     def route(self, callsign: str) -> dict | None:
-        """The route for callsign if known (or known to be missing), else
-        None after asking for it."""
-        if callsign in self.routes and time.time() - self.route_times.get(callsign, 0) < (
-                ROUTE_KEEP if self.routes[callsign] else ROUTE_KEEP_MISSING):
-            return self.routes[callsign]
-        if callsign not in self.wanted:
-            self.wanted.insert(0, callsign)
-            del self.wanted[20:]
-        return None
+        """The route for callsign if known, else None; one not looked up
+        lately is asked for (and the old one returned meanwhile)."""
+        known = self.routes.get(callsign)
+        if known is None or time.time() - known[0] > (ROUTE_KEEP if known[1] else ROUTE_KEEP_MISSING):
+            with self.wanted_lock:
+                if not self.wanted or self.wanted[0] != callsign:
+                    if callsign in self.wanted:
+                        self.wanted.remove(callsign)
+                    self.wanted.insert(0, callsign)
+                    del self.wanted[20:]
+        return known[1] if known else None
 
     def route_loop(self) -> None:
+        session = self.session()
         retry = FETCH_RETRY
         while True:
             time.sleep(ROUTE_GAP)
-            if not self.wanted:
+            with self.wanted_lock:
+                callsign = self.wanted[0] if self.wanted else None
+            if callsign is None:
                 continue
-            callsign = self.wanted[0]
             try:
-                route = self.lookup(callsign)
+                route = self.lookup(session, callsign)
             except Exception as e:
                 log(f"route lookup failed for {callsign}: {type(e).__name__}: {e}")
                 time.sleep(retry)
                 retry = min(retry * 2, FETCH_RETRY_MAX)
                 continue
             retry = FETCH_RETRY
-            self.routes[callsign] = route
-            self.route_times[callsign] = time.time()
-            if callsign in self.wanted:
-                self.wanted.remove(callsign)
+            self.routes[callsign] = (time.time(), route)
+            with self.wanted_lock:
+                if callsign in self.wanted:
+                    self.wanted.remove(callsign)
             self.save_routes()
 
-    def lookup(self, callsign: str) -> dict | None:
-        r = self.session.get(ROUTE_URL.format(callsign=callsign), timeout=10)
-        if r.status_code == 404:
-            return None
+    def lookup(self, session: requests.Session, callsign: str) -> dict | None:
+        r = session.get(ROUTE_URL.format(callsign=callsign), timeout=10)
+        if 400 <= r.status_code < 500 and r.status_code != 429:
+            return None  # unknown (or a callsign it won't take): don't keep asking
         r.raise_for_status()
         found = r.json().get("response")
-        if not isinstance(found, dict) or "flightroute" not in found:
+        if not isinstance(found, dict) or not isinstance(found.get("flightroute"), dict):
             return None
         route = found["flightroute"]
         origin, destination = route.get("origin") or {}, route.get("destination") or {}
         try:
-            return {
+            return checked({
                 "airline": (route.get("airline") or {}).get("name"),
                 "flight": route.get("callsign_iata"),
-                "from": origin["iata_code"], "to": destination["iata_code"],
+                "from": origin.get("iata_code") or origin["icao_code"],
+                "to": destination.get("iata_code") or destination["icao_code"],
                 "from_at": (origin["latitude"], origin["longitude"]),
                 "to_at": (destination["latitude"], destination["longitude"]),
-            }
-        except (KeyError, TypeError):
+            })
+        except (KeyError, TypeError, ValueError, AttributeError):
             return None
 
     def load_routes(self) -> None:
         try:
             saved = json.loads((CACHE_DIR / "routes.json").read_text())
-            self.routes = saved["routes"]
-            self.route_times = saved["times"]
+            routes, times = saved["routes"], saved["times"]
         except (OSError, ValueError, KeyError, TypeError):
-            pass
+            return
+        for callsign, at in times.items():
+            try:
+                route = routes.get(callsign)
+                self.routes[callsign] = (float(at), None if route is None else checked(route))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
 
     def save_routes(self) -> None:
+        """Forget routes past keeping, and write the rest to the cache."""
         now = time.time()
-        keep = [c for c, at in self.route_times.items() if now - at < ROUTE_KEEP]
+        self.routes = {c: (at, route) for c, (at, route) in self.routes.items()
+                       if now - at < (ROUTE_KEEP if route else ROUTE_KEEP_MISSING)}
         path = CACHE_DIR / "routes.json"
         try:
             path.with_suffix(".tmp").write_text(json.dumps({
-                "routes": {c: self.routes[c] for c in keep if c in self.routes},
-                "times": {c: self.route_times[c] for c in keep},
+                "routes": {c: route for c, (at, route) in self.routes.items()},
+                "times": {c: at for c, (at, route) in self.routes.items()},
             }))
             path.with_suffix(".tmp").replace(path)
         except OSError as e:
             log(f"couldn't save routes: {e}")
 
 
+def checked(route: dict) -> dict:
+    """A route with the fields the card uses, of the right types (raising
+    KeyError, TypeError or ValueError if they're missing or wrong)."""
+    airline, flight = route.get("airline"), route.get("flight")
+    if not (isinstance(route["from"], str) and isinstance(route["to"], str) and route["from"] and route["to"]):
+        raise ValueError("no airport codes")
+    return {
+        "airline": airline if isinstance(airline, str) and airline else None,
+        "flight": flight if isinstance(flight, str) and len(flight) > 2 else None,
+        "from": route["from"], "to": route["to"],
+        "from_at": (float(route["from_at"][0]), float(route["from_at"][1])),
+        "to_at": (float(route["to_at"][0]), float(route["to_at"][1])),
+    }
+
+
+def arc(a: tuple, b: tuple) -> float:
+    """The angle (radians) between two (latitude, longitude) points in radians."""
+    h = math.sin((b[0] - a[0]) / 2) ** 2 + math.cos(a[0]) * math.cos(b[0]) * math.sin((b[1] - a[1]) / 2) ** 2
+    return 2 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def bearing(a: tuple, b: tuple) -> float:
+    """The initial compass bearing (radians) from a to b, both in radians."""
+    y = math.sin(b[1] - a[1]) * math.cos(b[0])
+    x = math.cos(a[0]) * math.sin(b[0]) - math.sin(a[0]) * math.cos(b[0]) * math.cos(b[1] - a[1])
+    return math.atan2(y, x)
+
+
 def off_route(route: dict, lat: float, lon: float) -> float:
     """How far (m) a point is from the great circle between a route's ends
     (or past either end)."""
     p1, p2, p3 = (tuple(map(math.radians, p)) for p in (route["from_at"], route["to_at"], (lat, lon)))
-
-    def distance(a, b):
-        h = math.sin((b[0] - a[0]) / 2) ** 2 + math.cos(a[0]) * math.cos(b[0]) * math.sin((b[1] - a[1]) / 2) ** 2
-        return 2 * math.asin(min(1.0, math.sqrt(h)))
-
-    def bearing(a, b):
-        y = math.sin(b[1] - a[1]) * math.cos(b[0])
-        x = math.cos(a[0]) * math.sin(b[0]) - math.sin(a[0]) * math.cos(b[0]) * math.cos(b[1] - a[1])
-        return math.atan2(y, x)
-
-    d13, length = distance(p1, p3), distance(p1, p2)
-    cross = math.asin(max(-1.0, min(1.0, math.sin(d13) * math.sin(bearing(p1, p3) - bearing(p1, p2)))))
+    d13, length = arc(p1, p3), arc(p1, p2)
+    turn = bearing(p1, p3) - bearing(p1, p2)
+    cross = math.asin(max(-1.0, min(1.0, math.sin(d13) * math.sin(turn))))
     along = math.acos(max(-1.0, min(1.0, math.cos(d13) / max(math.cos(cross), 1e-9))))
-    if math.cos(bearing(p1, p3) - bearing(p1, p2)) < 0:
+    if math.cos(turn) < 0:
         along = -along
     beyond = max(0.0, -along, along - length)
     return EARTH_RADIUS * max(abs(cross), beyond)
+
+
+def plausible(route: dict, plane: Plane) -> bool:
+    """Whether a plane could be flying a route (adsbdb's are often out of
+    date): near its great circle, and going the right way along it."""
+    lat, lon = plane.place()
+    if off_route(route, lat, lon) > ROUTE_SLACK:
+        return False
+    here = (math.radians(lat), math.radians(lon))
+    origin, destination = (tuple(map(math.radians, route[end])) for end in ("from_at", "to_at"))
+    near_origin = arc(here, origin) * EARTH_RADIUS < NEAR_AIRPORT
+    near_destination = arc(here, destination) * EARTH_RADIUS < NEAR_AIRPORT
+    if near_origin != near_destination:  # (both for a hop too short to tell)
+        return plane.climb > -CLIMBING if near_origin else plane.climb < CLIMBING
+    if near_origin or plane.heading is None:
+        return True
+    turn = math.degrees(bearing(here, destination)) - plane.heading
+    return abs((turn + 180) % 360 - 180) < ROUTE_TURN
 
 
 def short_airline(name: str) -> str:
@@ -412,7 +498,8 @@ class Flights:
         self.planes: dict[str, Plane] = {}
         self.polled = 0
         self.current: Plane | None = None
-        self.since = -math.inf
+        self.since = -math.inf  # when the current plane's turn began
+        self.changed = -math.inf  # when the card last changed planes (it fades in)
         self.card = None
         self.card_key = None
         self.feed = Feed()
@@ -456,11 +543,12 @@ class Flights:
         if not seen:
             if current is not None:
                 self.current, self.since = None, now
+                self.changed = now
             return
         close = [plane for plane, distance, az in seen if distance < CLOSE]
         choice = close[0] if close else min(seen, key=lambda s: (s[0].shown, s[1]))[0]
-        if choice is not current:
-            self.current = choice
+        if choice is not current:  # (a plane taking another turn doesn't fade in again)
+            self.current, self.changed = choice, now
         choice.shown = self.since = now
 
     # The card -------------------------------------------------------------
@@ -490,12 +578,15 @@ class Flights:
         return " ".join(words)
 
     def title(self, plane: Plane, route: dict | None) -> tuple[str, tuple]:
-        """The flight (airline and number) or registration, and its color."""
-        match = re.match(r"^([A-Z]{3})0*(\d[0-9A-Z]*)$", plane.callsign)
+        """The flight (airline and number) or registration, and its color.
+        (route here may be out of date: its airline and flight number come
+        from the callsign, so they're right even so.)"""
+        match = CALLSIGN.match(plane.callsign)
         room = WIDTH - 2 * MARGIN
         if not match:
-            name = plane.registration or plane.callsign or plane.id.upper()
-            return name, MILITARY if plane.military else WHITE
+            # (a TIS-B target's made-up address starts with ~)
+            name = plane.registration or plane.callsign or plane.id.lstrip("~").upper()
+            return self.fit([name], room, self.title_font), MILITARY if plane.military else WHITE
         prefix, number = match.groups()
         known = AIRLINES.get(prefix)
         color = known[1] if known else MILITARY if plane.military else DEFAULT_AIRLINE
@@ -506,24 +597,27 @@ class Flights:
         return self.fit([o for o in options if o], room, self.title_font), color
 
     def operator(self, plane: Plane) -> str | None:
-        """A non-airline plane's operator, if it's a business or agency."""
-        if not plane.owner or "," in plane.owner or not BUSINESS.search(plane.owner.upper()):
+        """A non-airline plane's operator, if it's a business or agency (never
+        a private owner's name). Several owners, or a bank holding it in
+        trust, say nothing about who flies it."""
+        owner = plane.owner.upper()
+        if not owner or "," in owner or "TRUSTEE" in owner:
             return None
         words = [w for w in plane.owner.split() if w.lower().strip(".") not in COMPANY_WORDS]
-        return " ".join(w if len(w) <= 3 and w.isupper() and w not in ("AIR",) else w.title() for w in words)
+        if not words or " ".join(words).upper() == plane.registration.upper():
+            return None  # ("N123AB LLC")
+        if not BUSINESS.search(owner) and not (len(words) == 1 and len(plane.owner.split()) > 1):
+            return None
+        return " ".join(w.lower() if i and w.lower() in SMALL_WORDS
+                        else w if len(w) <= 3 and w.isupper() and w != "AIR" else w.capitalize()
+                        for i, w in enumerate(words))
 
     def lines(self, plane: Plane, distance: float, az: float, now: float) -> list:
         """The card for a plane: (row top, [(text or icon, color, x, font)])."""
-        route = None
-        airline = re.match(r"^[A-Z]{3}\d", plane.callsign) is not None
-        if airline:
-            found = self.feed.route(plane.callsign)
-            if found:
-                lat = HOME_LAT + plane.anchor[1] / M_PER_LAT
-                lon = HOME_LON + plane.anchor[0] / M_PER_LON
-                if off_route(found, lat, lon) < ROUTE_SLACK:
-                    route = found
-        title, color = self.title(plane, route)
+        airline = CALLSIGN.match(plane.callsign) is not None
+        found = self.feed.route(plane.callsign) if airline else None
+        route = found if found and plausible(found, plane) else None
+        title, color = self.title(plane, found)
         rows = [(TITLE_TOP, [(title, color, MARGIN, self.title_font)])]
         room = WIDTH - 2 * MARGIN
 
@@ -544,7 +638,7 @@ class Flights:
 
         # Type, and how far and which way
         miles = distance / METERS_PER_MILE
-        where = f"{miles:.1f}mi {COMPASS[round(az / 45) % 8]}" if miles < 10 else \
+        where = f"{miles:.1f}mi {COMPASS[round(az / 45) % 8]}" if miles < 9.95 else \
             f"{miles:.0f}mi {COMPASS[round(az / 45) % 8]}"
         right = WIDTH - MARGIN - self.width(where)
         kind = self.fit([type_name(plane), plane.type], right - MARGIN - 3)
@@ -594,7 +688,8 @@ class Flights:
         for plane, distance, az in seen:
             x = min(WIDTH - 1, max(0, round((az - VIEW_LEFT) / span * (WIDTH - 1))))
             if plane is self.current:
-                frame[DOTS_ROW:DOTS_ROW + 2, max(0, x - 1):x + 1] = WHITE
+                left = min(max(0, x - 1), WIDTH - 2)  # (2 wide even at an edge)
+                frame[DOTS_ROW:DOTS_ROW + 2, left:left + 2] = WHITE
             else:
                 frame[DOTS_ROW + 1, x] = np.maximum(frame[DOTS_ROW + 1, x], FAINT)
 
@@ -613,7 +708,7 @@ class Flights:
         key = repr(rows)
         if key != self.card_key:
             self.card, self.card_key = self.render(rows), key
-        fade = min(1.0, (now - self.since) / FADE_SECONDS)
+        fade = min(1.0, (now - self.changed) / FADE_SECONDS)
         frame = self.card * fade if fade < 1 else self.card.copy()
         self.dots(frame, seen)
         self.frame_count += 1
