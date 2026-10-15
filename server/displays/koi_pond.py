@@ -137,24 +137,33 @@ class Discs:
     def __bool__(self) -> bool:
         return bool(self.x or self.batches)
 
+    def extend(self, other: "Discs") -> None:
+        """Take in another batch's discs, to draw them together."""
+        self.x += other.x
+        self.y += other.y
+        self.r += other.r
+        self.w += other.w
+        self.c += other.c
+        self.batches += other.batches
+
     def raster(self) -> tuple:
-        """(row, column, coverage, which disc) for every pixel a disc touches,
-        and the discs' colors."""
+        """(row, column, coverage, how far inside the disc, which disc) for
+        every pixel a disc touches, and the discs' colors."""
         x, y, r, w, colors = self.arrays()
         x = np.asarray(x, np.float32)[:, None]
         y = np.asarray(y, np.float32)[:, None]
         xi = np.floor(x).astype(np.int32) + DISC_DX
         yi = np.floor(y).astype(np.int32) + DISC_DY
-        d = np.sqrt((xi - x) ** 2 + (yi - y) ** 2)
-        cover = np.clip(np.asarray(r, np.float32)[:, None] + 0.5 - d, 0, 1) * np.asarray(w, np.float32)[:, None]
+        inside = np.asarray(r, np.float32)[:, None] + 0.5 - np.sqrt((xi - x) ** 2 + (yi - y) ** 2)
+        cover = np.clip(inside, 0, 1) * np.asarray(w, np.float32)[:, None]
         ok = (xi >= 0) & (xi < WIDTH) & (yi >= 0) & (yi < HEIGHT) & (cover > 0.004)
-        return yi[ok], xi[ok], cover[ok], np.nonzero(ok)[0], colors
+        return yi[ok], xi[ok], cover[ok], inside[ok], np.nonzero(ok)[0], colors
 
     def paint(self, frame: np.ndarray) -> None:
         """Paint the blobs over a (height, width, 3) frame."""
         if not self:
             return
-        yi, xi, cover, which, colors = self.raster()
+        yi, xi, cover, inside, which, colors = self.raster()
         if not len(cover):
             return
         # Work in the box the blobs cover
@@ -163,9 +172,12 @@ class Discs:
         local = (yi - y0) * w + (xi - x0)
         alpha = np.zeros(w * h, np.float32)
         np.maximum.at(alpha, local, cover)
-        total = np.maximum(np.bincount(local, cover, w * h), 1e-6)
+        # Each pixel takes its color mostly from the disc it's deepest
+        # inside, so a koi's patches stay crisp rather than blurring together
+        weight = cover * np.exp(2.5 * inside)
+        total = np.maximum(np.bincount(local, weight, w * h), 1e-6)
         rgb = np.bincount((local[:, None] * 3 + RGB_INDEX).ravel(),
-                          (cover[:, None] * np.asarray(colors, np.float32)[which]).ravel(), w * h * 3)
+                          (weight[:, None] * np.asarray(colors, np.float32)[which]).ravel(), w * h * 3)
         blend = rgb.reshape(h, w, 3) / total.reshape(h, w, 1)
         region = frame[y0:y1, x0:x1]
         region += (blend - region) * alpha.reshape(h, w, 1)
@@ -174,7 +186,7 @@ class Discs:
         """The blobs' summed weights per pixel (height, width), for a shadow."""
         if not self:
             return np.zeros((HEIGHT, WIDTH), np.float32)
-        yi, xi, cover, _, _ = self.raster()
+        yi, xi, cover, _, _, _ = self.raster()
         return np.bincount(yi * WIDTH + xi, cover, PIXELS).astype(np.float32).reshape(HEIGHT, WIDTH)
 
 
@@ -250,6 +262,9 @@ def pattern(variety: str, n: int) -> tuple[list[tuple], tuple, bool]:
 AVOID_LOOK = (0.0, 3.0, 6.0)
 AVOID_GAP = 1.2
 AVOID_URGENCY = (1.0, 0.7, 0.35)
+# Once clear, it keeps turning away (less and less) this many frames more,
+# rather than swinging straight back and dithering at the edge of the gap
+AVOID_HOLD = 8
 
 VARIETIES = ["kohaku", "sanke", "showa", "tancho", "ogon", "platinum", "asagi", "chagoi", "kumonryu"]
 KOI = 6
@@ -292,6 +307,8 @@ class Koi:
         self.phase = random.uniform(0, TAU)
         self.task: str | None = None
         self.avoid: tuple[int, float] | None = None  # (which way to turn, how urgently)
+        self.avoiding = -1  # which koi it's turning away from
+        self.avoid_hold = 0
         self.calm_in = 0  # frames until a hiding koi comes out again
         self.pause = 0
         self.gulp = 0
@@ -338,16 +355,18 @@ class Koi:
             # Slow down to arrive rather than overshoot
             want *= min(1.0, 0.3 + distance / 6)
         desired = math.atan2(dy, dx)
-        max_turn = 0.02 + 0.12 * self.speed
+        max_turn = 0.02 + 0.12 * self.speed + (0.03 if self.task == "feed" else 0.0)  # (pivoting for food)
 
         # Steer clear of the other koi (see Pond.keep_apart), yielding:
-        # turning away and slowing, more the closer they are
+        # turning away and slowing, more the closer they are (still toward
+        # where it's going, if that's the way it's turning anyway)
+        turn = wrap(desired - self.heading)
         if self.avoid:
             side, urgency = self.avoid
-            desired = self.heading + side * (0.5 + 1.2 * urgency)
+            turn = side * max(0.5 + 1.2 * urgency, turn * side)
             want *= 1 - 0.75 * urgency
             max_turn *= 1 + 1.5 * urgency
-        self.heading = wrap(self.heading + max(-max_turn, min(max_turn, wrap(desired - self.heading) * 0.08)))
+        self.heading = wrap(self.heading + max(-max_turn, min(max_turn, turn * 0.08)))
         self.speed += (want - self.speed) * (0.08 if self.task == "flee" else 0.04)
         self.x += math.cos(self.heading) * self.speed
         self.y += math.sin(self.heading) * self.speed
@@ -390,7 +409,7 @@ class Koi:
         spine = p + across * side[:, None]
         colors = self.color_array
         if self.shimmer:
-            glint = 0.25 * np.maximum(0.0, np.sin(t * 1.6 - self.index * 0.7))[:, None]
+            glint = 0.25 * np.maximum(0.0, np.sin((t * 1.6) % TAU - self.index * 0.7))[:, None]
             colors = colors + (SHIMMER - colors) * glint
         body = Discs()
         body.add_many(spine[:, 0], spine[:, 1], self.radius_array, alpha, colors + (WATER_RGB - colors) * fade)
@@ -399,18 +418,19 @@ class Koi:
         shadow.add_many(spine[:, 0] + offset * SHADOW_DX, spine[:, 1] + offset * SHADOW_DY,
                         self.radius_array + 0.3, 0.2 + 0.12 * z, colors)
 
-        fin = mix(self.fin_color, WATER, fade + 0.15)
+        fin = mix(self.fin_color, WATER, fade + 0.05)
         # Pectoral fins, sculling
         i = self.fin_at
         (x, y), (ax, ay), (nx, ny) = spine[i], ahead[i], across[i]
-        reach = self.radii[i] + 0.55 + 0.25 * math.sin(self.phase * 0.5)
+        reach = self.radii[i] + 0.5 + 0.3 * math.sin(self.phase * 0.5)
         for s in (1, -1):
-            body.add(x + nx * reach * s - ax * 0.35, y + ny * reach * s - ay * 0.35, 0.6, 0.5 * alpha, fin)
-        # The tail fin, a fan behind the last point
+            body.add(x + nx * reach * s - ax * 0.5, y + ny * reach * s - ay * 0.5, 0.7, 0.7 * alpha, fin)
+        # The tail fin, a fan of two lobes splayed behind the last point
         (x, y), (ax, ay), (nx, ny) = spine[-1], ahead[-1], across[-1]
         for s in (1, -1):
-            spread = 0.7 + 0.25 * math.sin(self.phase + s)
-            body.add(x - ax * 0.9 + nx * spread * s, y - ay * 0.9 + ny * spread * s, 0.65, 0.55 * alpha, fin)
+            spread = 0.8 + 0.3 * math.sin(self.phase + s)
+            body.add(x - ax * 1.2 + nx * spread * s, y - ay * 1.2 + ny * spread * s, 0.7, 0.75 * alpha, fin)
+        body.add(x - ax * 0.7, y - ay * 0.7, 0.55, 0.75 * alpha, fin)
         if self.gulp:
             mx, my = self.mouth()
             body.add(mx, my, 0.5, 0.8, (40, 22, 22))
@@ -496,7 +516,9 @@ class Pond(Tank):
                 veins = np.cos(angle * 7 + notch) > 0.9
                 tone = np.where(veins, shade * 0.75, shade)[..., None]
                 pad = np.array(PAD_DARK, np.float32) + (np.array(PAD_LIGHT, np.float32) - PAD_DARK) * tone
-                color += (pad - color) * cover[..., None]
+                # (Over the pads drawn so far, kept as unpremultiplied colors)
+                under = alpha * (1 - cover)
+                color = (pad * cover[..., None] + color * under[..., None]) / np.maximum(cover + under, 1e-6)[..., None]
                 np.maximum(alpha, cover, out=alpha)
         lotus = Discs()
         cx, cy, r = PADS[LOTUS_PAD]
@@ -506,9 +528,11 @@ class Pond(Tank):
             lotus.add(lx + math.cos(a) * 1.3, ly + math.sin(a) * 1.3, 0.85, 1.0, PETAL)
             lotus.add(lx + math.cos(a) * 1.8, ly + math.sin(a) * 1.8, 0.4, 0.8, PETAL_TIP)
         lotus.add(lx, ly, 0.7, 1.0, LOTUS_HEART)
+        # (The flower covers the notch in the middle of its pad)
+        color[alpha == 0] = PAD_DARK
         lotus.paint(color)
+        np.maximum(alpha, np.minimum(lotus.shade(), 1), out=alpha)
         self.pad_color = color
-        self.pad_color = self.pad_color.reshape(HEIGHT, WIDTH, 3)
         self.pad_alpha = alpha[..., None]
         self.pad_shadow = shadow
 
@@ -517,39 +541,63 @@ class Pond(Tank):
         comes near another koi's body (at any depth: they rarely overlap).
         A head right against another body is also pushed back off it."""
         koi = self.koi
-        points = np.array([p for k in koi for p in k.points], np.float32)
-        owner = np.repeat(np.arange(len(koi)), [k.n for k in koi])
-        radius = np.array([r for k in koi for r in k.radii], np.float32)
+        looks = len(AVOID_LOOK)
+        if not hasattr(self, "avoid_radius"):
+            # (These never change: every body point's radius and owner, and
+            # each probe's reach from its own koi's girth)
+            owner = np.repeat(np.arange(len(koi)), [k.n for k in koi])
+            mine = np.repeat(np.arange(len(koi)), looks)
+            girth = np.repeat(np.array([max(k.radii) for k in koi], np.float32), looks)
+            self.avoid_owner = owner.tolist()
+            self.avoid_radius = [r for k in koi for r in k.radii]
+            self.avoid_girth = girth.tolist()
+            self.avoid_reach = np.array(self.avoid_radius, np.float32)[None, :] + girth[:, None] + AVOID_GAP
+            self.avoid_others = owner[None, :] != mine[:, None]
+        points = [p for k in koi for p in k.points]
         probes = []
         for k in koi:
             c, s = math.cos(k.heading), math.sin(k.heading)
             probes += [(k.x + c * a, k.y + s * a) for a in AVOID_LOOK]
-        probes = np.array(probes, np.float32)
-        d = np.hypot(probes[:, None, 0] - points[None, :, 0], probes[:, None, 1] - points[None, :, 1])
-        mine = np.repeat(np.arange(len(koi)), len(AVOID_LOOK))
-        girth = np.repeat(np.array([max(k.radii) for k in koi], np.float32), len(AVOID_LOOK))
-        reach = radius[None, :] + girth[:, None] + AVOID_GAP
-        clash = (d < reach) & (owner[None, :] != mine[:, None])
+        pts, prb = np.array(points, np.float32), np.array(probes, np.float32)
+        d = np.hypot(prb[:, None, 0] - pts[None, :, 0], prb[:, None, 1] - pts[None, :, 1])
+        # Each probe's nearest point of another koi within reach, if any
+        d = np.where((d < self.avoid_reach) & self.avoid_others, d, np.inf)
+        nearest = d.argmin(axis=1)
+        gaps = d[np.arange(len(probes)), nearest].tolist()
+        nearest = nearest.tolist()
         for i, k in enumerate(koi):
-            k.avoid = None
             for j, urgency in enumerate(AVOID_URGENCY):
-                row = i * len(AVOID_LOOK) + j
-                hits = np.flatnonzero(clash[row])
-                if not len(hits):
+                row = i * looks + j
+                if gaps[row] == math.inf:
                     continue
-                near = hits[np.argmin(d[row, hits])]
+                near = nearest[row]
                 px, py = points[near]
-                # Turn away from the side it's on
-                cross = math.cos(k.heading) * (py - k.y) - math.sin(k.heading) * (px - k.x)
-                k.avoid = (-1 if cross > 0 else 1, urgency)
+                # Turn away from the side it's on (still the same way as
+                # last frame, when it's the same koi or no nearer than the
+                # one it was dodging, so it doesn't dither; but always away
+                # from a body right at its head)
+                other = self.avoid_owner[near]
+                if j > 0 and k.avoid and (k.avoiding == other or urgency <= k.avoid[1]):
+                    side = k.avoid[0]
+                else:
+                    cross = math.cos(k.heading) * (py - k.y) - math.sin(k.heading) * (px - k.x)
+                    side = -1 if cross > 0 else 1
+                k.avoid, k.avoiding, k.avoid_hold = (side, urgency), other, AVOID_HOLD
                 if j == 0:
-                    gap = d[row, near]
-                    touch = radius[near] + girth[row]
+                    gap = gaps[row]
+                    touch = self.avoid_radius[near] + self.avoid_girth[row]
                     if gap < touch:
                         push = (touch - gap) * 0.5 / max(gap, 0.1)
                         k.x -= (px - k.x) * push
                         k.y -= (py - k.y) * push
                 break
+            else:
+                # Clear: ease out of the turn
+                if k.avoid_hold > 0:
+                    k.avoid_hold -= 1
+                    k.avoid = (k.avoid[0], k.avoid[1] * 0.8)
+                else:
+                    k.avoid, k.avoiding = None, -1
 
     def on_pad(self, x: float, y: float, margin: float = 0.0) -> bool:
         return any(math.hypot(x - cx, y - cy) < r - margin for cx, cy, r in PADS)
@@ -618,15 +666,31 @@ class Pond(Tank):
         caustic = self.caustic_light(t) * (CAUSTIC_HIGH * self.caustics)
         frame = self.floor_rgb * (self.light * (CAUSTIC_LOW + caustic))[..., None]
 
-        # Shadows on the floor, then the koi from the deepest up
+        # Shadows on the floor, then the koi from the deepest up (those
+        # well apart drawn together, as they can't cover each other)
         shadow = Discs()
-        bodies = [(koi.z, koi.draw(t, shadow)) for koi in self.koi if koi.visible()]
+        layers: list[tuple[Discs, list]] = []  # (discs, the boxes they're in)
+        for koi in sorted(self.koi, key=lambda k: -k.z):
+            if not koi.visible():
+                continue
+            body = koi.draw(t, shadow)
+            xs, ys = [x for x, y in koi.points], [y for x, y in koi.points]
+            box = (min(xs) - 4, min(ys) - 4, max(xs) + 4, max(ys) + 4)
+            # Above any layer with a koi it might cover
+            at = 0
+            for i, (_, boxes) in enumerate(layers):
+                if any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in boxes):
+                    at = i + 1
+            if at == len(layers):
+                layers.append((Discs(), []))
+            layers[at][0].extend(body)
+            layers[at][1].append(box)
         if self.event:
             self.event.shadows(shadow)
         shade = np.minimum(shadow.shade() + self.pad_shadow, SHADOW_MAX)
         frame *= (1 - shade * self.light)[..., None]
-        for z, body in sorted(bodies, key=lambda b: -b[0]):
-            body.paint(frame)
+        for layer, _ in layers:
+            layer.paint(frame)
         if self.event:
             self.event.under(frame, t)
         self.draw_ripples(frame)
@@ -643,6 +707,8 @@ class Pond(Tank):
 # --- Events ------------------------------------------------------------------
 
 PELLET = (176, 124, 66)
+WAIT_DISTANCE = 8.0  # how far from the food koi wait their turn
+CLAIM_ROOM = 4.0  # how close to another koi's pellet one won't go for its own
 
 
 class Feeding(PondEvent):
@@ -677,24 +743,28 @@ class Feeding(PondEvent):
             p["vy"] *= 0.995
         live = self.live()
         # Each koi goes for its own pellet (the nearest one no koi nearer has
-        # claimed), so they don't pile up; with none left to claim, it waits
-        # a little way off
-        claimed = set()
+        # claimed, nor one right by it), so they don't pile up; with none
+        # left to claim, it circles a little way off, out of the others' way
+        claimed = []
         hungry = [k for k in self.tank.koi if self.frame_count >= self.notice[id(k)]]
         hungry.sort(key=lambda k: min(((p["x"] - k.x) ** 2 + (p["y"] - k.y) ** 2 for p in live), default=0))
         for koi in hungry:
             if not live:
                 break
             mx, my = koi.mouth()
-            free = [p for p in live if id(p) not in claimed]
+            free = [p for p in live
+                    if all((p["x"] - q["x"]) ** 2 + (p["y"] - q["y"]) ** 2 > CLAIM_ROOM ** 2 for q in claimed)]
             koi.task, koi.z_to = "feed", 0.0
             if not free:
                 koi.pace = 0.6
                 nearest = min(live, key=lambda p: (p["x"] - mx) ** 2 + (p["y"] - my) ** 2)
-                koi.target = (nearest["x"] + (koi.x - nearest["x"]) * 0.8, nearest["y"] + (koi.y - nearest["y"]) * 0.8)
+                around = math.atan2(koi.y - nearest["y"], koi.x - nearest["x"])
+                way = 1 if wrap(koi.heading - around) > 0 else -1  # the way it's already going round
+                koi.target = (nearest["x"] + math.cos(around + way * 0.7) * WAIT_DISTANCE,
+                              nearest["y"] + math.sin(around + way * 0.7) * WAIT_DISTANCE)
                 continue
             nearest = min(free, key=lambda p: (p["x"] - mx) ** 2 + (p["y"] - my) ** 2)
-            claimed.add(id(nearest))
+            claimed.append(nearest)
             koi.pace = 2.2
             koi.target = (nearest["x"], nearest["y"])
             if math.hypot(nearest["x"] - mx, nearest["y"] - my) < 1.3 and koi.z < 0.35:
@@ -753,7 +823,7 @@ class Rain(PondEvent):
         while drops > 0:
             if random.random() < drops:
                 self.tank.ripple(random.uniform(-2, WIDTH + 2), random.uniform(-2, HEIGHT + 2),
-                                 random.uniform(0.5, 0.9), RAINDROP_FRAMES)
+                                 random.uniform(1.3, 2.0), RAINDROP_FRAMES)
             drops -= 1
         return f < self.frames
 
@@ -783,10 +853,13 @@ class Dragonfly(PondEvent):
         self.height = 1.0  # above the water: 1 flying, 0 touching
         # Its plan: a few stops, a dip or two, a rest on a pad, then away
         stops = [("fly", self.spot()) for _ in range(random.randint(2, 4))]
-        for i in random.sample(range(len(stops)), min(2, len(stops))):
-            stops.insert(i + 1, ("dip", None))
+        for i in sorted(random.sample(range(len(stops)), 2), reverse=True):
+            stops.insert(i + 1, ("dip", None))  # (from the back, so never two together)
+        # Resting on the side of a pad toward the middle, so it's in view
         cx, cy, r = random.choice(PADS[:LOTUS_PAD] + PADS[LOTUS_PAD + 1:])
-        rest = (cx + random.uniform(-0.4, 0.4) * r, cy + random.uniform(-0.4, 0.4) * r)
+        towards = math.atan2(HEIGHT / 2 - cy, WIDTH / 2 - cx) + random.uniform(-0.8, 0.8)
+        out = random.uniform(0.2, 0.5) * r
+        rest = (cx + math.cos(towards) * out, cy + math.sin(towards) * out)
         stops += [("fly", rest), ("rest", None), ("fly", self.spot()),
                   ("fly", (random.choice((-8.0, WIDTH + 8.0)), random.uniform(0, HEIGHT)))]
         self.plan = stops
@@ -865,12 +938,13 @@ class Dragonfly(PondEvent):
 
     def above(self, frame: np.ndarray, t: float) -> None:
         resting = self.doing == "rest" and self.wait
-        wings = 0.6 if resting else random.uniform(0.25, 0.6)  # a blur in flight
+        wings = 0.8 if resting else random.uniform(0.45, 0.8)  # a blur in flight
         wing, body = self.creature(wings)
         wing.paint(frame)
         body.paint(frame)
 
 
+WINGBEAT = TAU * 1.6 * FRAME_SECONDS  # the heron's wingbeat, a frame's turn of it
 # Out of view, where koi hide from the heron besides under the pads
 HIDEOUTS = [(-10.0, 8.0), (-10.0, 24.0), (WIDTH + 10.0, 8.0), (WIDTH + 10.0, 24.0),
             (20.0, -8.0), (44.0, -8.0), (20.0, HEIGHT + 8.0), (44.0, HEIGHT + 8.0)]
@@ -882,9 +956,10 @@ class Heron(PondEvent):
 
     def __init__(self, pond: Pond) -> None:
         super().__init__(pond)
-        # Across the pond on a slant
-        y0 = random.uniform(-4, HEIGHT + 4)
-        y1 = random.uniform(-4, HEIGHT + 4)
+        # Across the pond on a slant (well in view: along an edge it barely
+        # shows)
+        y0 = random.uniform(6, HEIGHT - 6)
+        y1 = random.uniform(6, HEIGHT - 6)
         if random.random() < 0.5:
             (x0, x1) = (-22.0, WIDTH + 22.0)
         else:
@@ -922,32 +997,42 @@ class Heron(PondEvent):
                 koi.calm_in = frames_for(random.uniform(4, 12))
 
     def shape(self) -> Discs:
+        """The heron's shadow: broad wings beating slowly, its neck drawn
+        in (the head close to the shoulders, bill forward) and its long
+        legs trailing."""
         x, y = self.position()
         c, s = math.cos(self.heading), math.sin(self.heading)
         nx, ny = -s, c
         bird = Discs()
-        for along, r in ((3, 1.2), (1.5, 1.7), (0, 1.9), (-1.5, 1.6), (-3, 1.1)):
-            bird.add(x + c * along, y + s * along, r, 1.0)
-        for along in (4.5, 5.5, 6.5):
-            bird.add(x + c * along, y + s * along, 0.6, 1.0)  # the neck, tucked
-        bird.add(x + c * 7.4, y + s * 7.4, 0.8, 1.0)
-        bird.add(x + c * 8.8, y + s * 8.8, 0.4, 1.0)  # the bill
-        for along in (-4.5, -6, -7.5):
-            bird.add(x + c * along, y + s * along, 0.35, 1.0)  # legs trailing
+
+        def at(along, side, r):
+            bird.add(x + c * along + nx * side, y + s * along + ny * side, r, 1.0)
+
+        for along, r in ((2.5, 1.1), (1.2, 1.5), (0, 1.6), (-1.4, 1.3), (-2.7, 0.9)):
+            at(along, 0, r)
+        at(3.8, 0, 0.9)  # the head
+        at(5.1, 0, 0.4)  # the bill
+        at(6.1, 0, 0.3)
+        for along in (-4.0, -5.2, -6.4, -7.6):
+            at(along, 0, 0.35)  # legs trailing
+        # The wings, seen shorter at the top and bottom of each beat: arched
+        # forward to the wrist, the tips swept back
+        span = 0.72 + 0.28 * math.cos(self.frame_count * WINGBEAT)
         for side in (1, -1):
-            for k in range(1, 13):
-                sweep = -0.18 * k
-                bird.add(x + c * sweep + nx * k * side, y + s * sweep + ny * k * side, 1.9 - 0.1 * k, 1.0)
+            for k in range(1, 12):
+                u = k / 11
+                at(0.8 * math.sin(u * math.pi) - 1.6 * u * u - 0.3, side * k * span, 2.0 - 1.0 * u)
         return bird
 
     def above(self, frame: np.ndarray, t: float) -> None:
         frame *= (1 - np.minimum(self.shape().shade(), 1.0) * 0.62)[..., None]
 
 
-FROG = (92, 104, 34)  # olive, to stand out on a green pad
-FROG_BACK = (150, 190, 60)
-FROG_EYES = (245, 210, 60)
-FROG_THROAT = (225, 220, 170)
+FROG = (150, 178, 44)  # yellow-green, to stand out on a green pad
+FROG_BACK = (196, 214, 96)
+FROG_EYES = (40, 34, 8)  # dark, to show on its bright head
+FROG_THROAT = (230, 226, 180)
+FROG_OUTLINE = (8, 26, 10)  # its shadow on the pad, outlining it
 
 
 class Frog(PondEvent):
@@ -956,15 +1041,21 @@ class Frog(PondEvent):
 
     def __init__(self, pond: Pond) -> None:
         super().__init__(pond)
-        # A pad well in view (the lotus pad has room beside the flower)
-        self.pad = random.choice([p for p in PADS if 4 < p[0] < WIDTH - 4 and 4 < p[1] < HEIGHT - 4])
+        # A pad with a seat well in view: on the side facing the middle (on
+        # the lotus pad, the side away from the flower)
+        seats = []
+        for i, (cx, cy, r) in enumerate(PADS):
+            if i == LOTUS_PAD:
+                towards, out = math.pi / 4, 0.5
+            else:
+                towards, out = math.atan2(HEIGHT / 2 - cy, WIDTH / 2 - cx), 0.35
+            x, y = cx + math.cos(towards) * r * out, cy + math.sin(towards) * r * out
+            if 3.5 < x < WIDTH - 3.5 and 3.5 < y < HEIGHT - 3.5:
+                seats.append(((cx, cy, r), (x, y), towards))
+        self.pad, self.seat, self.towards = random.choice(seats)
         cx, cy, r = self.pad
-        # In from the nearest edge, to the pad's edge facing the middle
-        towards = math.atan2(HEIGHT / 2 - cy, WIDTH / 2 - cx)
-        self.seat = (cx + math.cos(towards) * r * 0.35, cy + math.sin(towards) * r * 0.35)
-        self.landing = (cx + math.cos(towards) * (r + 1.5), cy + math.sin(towards) * (r + 1.5))
-        start_angle = towards + random.uniform(-0.6, 0.6)
-        self.x, self.y = cx + math.cos(start_angle) * 40, cy + math.sin(start_angle) * 40
+        self.landing = (cx + math.cos(self.towards) * (r + 1.5), cy + math.sin(self.towards) * (r + 1.5))
+        self.x, self.y = self.entry(*self.landing)
         self.heading = math.atan2(self.landing[1] - self.y, self.landing[0] - self.x)
         self.phase = "swim"
         self.kick = 0.0
@@ -972,23 +1063,39 @@ class Frog(PondEvent):
         self.lift = 0.0
         self.croak = 0.0
         self.frame_count = 0
+        self.limit = frames_for(90)
+
+    @staticmethod
+    def entry(x: float, y: float) -> tuple[float, float]:
+        """Somewhere just out of view, a short swim from (x, y)."""
+        for _ in range(40):
+            a = random.uniform(0, TAU)
+            for d in range(4, 40):
+                ex, ey = x + math.cos(a) * d, y + math.sin(a) * d
+                if not (-4 < ex < WIDTH + 4 and -4 < ey < HEIGHT + 4):
+                    break
+            if 14 <= d < 39:
+                break
+        return ex, ey
 
     def step(self) -> bool:
         self.frame_count += 1
         if self.phase in ("swim", "leave"):
-            tx, ty = self.landing if self.phase == "swim" else self.away
-            dx, dy = tx - self.x, ty - self.y
+            dx, dy = self.landing[0] - self.x, self.landing[1] - self.y
             d = math.hypot(dx, dy)
             self.kick = (self.kick + 0.06) % 1.0
             speed = 0.05 + 0.35 * max(0.0, math.sin(self.kick * TAU))  # a push, then a glide
-            self.heading += wrap(math.atan2(dy, dx) - self.heading) * 0.1
+            if self.phase == "swim":
+                # (Straight at the pad once close, so it can't circle it)
+                self.heading = wrap(self.heading + wrap(math.atan2(dy, dx) - self.heading) * (0.1 if d > 3 else 0.5))
             self.x += math.cos(self.heading) * speed
             self.y += math.sin(self.heading) * speed
             if self.phase == "swim" and d < 1.0:
                 self.phase = "climb"
                 self.tank.ripple(self.x, self.y, 0.35)
             if self.phase == "leave":
-                return -8 < self.x < WIDTH + 8 and -8 < self.y < HEIGHT + 8
+                # Straight on, out of view
+                return -8 < self.x < WIDTH + 8 and -8 < self.y < HEIGHT + 8 and self.frame_count < self.limit
         elif self.phase == "climb":
             tx, ty = self.seat
             self.x += (tx - self.x) * 0.08
@@ -996,8 +1103,6 @@ class Frog(PondEvent):
             if math.hypot(tx - self.x, ty - self.y) < 0.2:
                 self.phase = "sit"
                 self.wait = frames_for(random.uniform(6, 12))
-                # Turn to face the water to jump into
-                cx, cy, r = self.pad
                 self.jump_to = self.spot_beyond()
                 self.croaks = sorted(random.sample(range(self.wait), 3))
         elif self.phase == "sit":
@@ -1006,9 +1111,9 @@ class Frog(PondEvent):
                 self.croaks.pop()
                 self.croak = 1.0
             self.croak = max(0.0, self.croak - 0.03)
+            # Settling, it turns to face the water it'll jump into
             want = math.atan2(self.jump_to[1] - self.y, self.jump_to[0] - self.x)
-            if self.wait < frames_for(1.5):
-                self.heading += wrap(want - self.heading) * 0.15
+            self.heading = wrap(self.heading + wrap(want - self.heading) * 0.05)
             if self.wait <= 0:
                 self.phase = "jump"
                 self.jump_from = (self.x, self.y)
@@ -1025,22 +1130,22 @@ class Frog(PondEvent):
                 self.tank.ripple(self.x, self.y, 1.1)
                 self.tank.ripple(self.x, self.y, 0.5)
                 self.phase = "leave"
-                # Off the nearest way out
-                self.away = (self.x + math.cos(self.heading) * 60, self.y + math.sin(self.heading) * 60)
-        return True
+        return self.frame_count < self.limit
 
     def spot_beyond(self) -> tuple[float, float]:
-        """Open water a jump away from the pad."""
+        """Open water a jump away from the pad, off the side it sits on."""
         cx, cy, r = self.pad
         for _ in range(30):
-            a = random.uniform(0, TAU)
+            a = self.towards + random.uniform(-1.3, 1.3)
             d = r + random.uniform(4, 8)
             x, y = cx + math.cos(a) * d, cy + math.sin(a) * d
             if 4 < x < WIDTH - 4 and 4 < y < HEIGHT - 4 and not self.tank.on_pad(x, y):
                 return x, y
         return WIDTH / 2, HEIGHT / 2
 
-    def creature(self, wet: bool) -> Discs:
+    def creature(self, wet: bool) -> tuple[Discs, Discs]:
+        """The frog as discs: its body, and its eyes and throat (drawn over
+        the body, or they'd blur into it)."""
         c, s = math.cos(self.heading), math.sin(self.heading)
         nx, ny = -s, c
         x, y = self.x, self.y
@@ -1048,60 +1153,82 @@ class Frog(PondEvent):
         alpha = 0.8 if wet else 1.0
         size = 1.2 + 0.3 * self.lift
 
-        def at(along, side, r, color, w=1.0):
-            frog.add(x + (c * along + nx * side) * size, y + (s * along + ny * side) * size, r * size,
-                     w * alpha, mix(color, WATER, fade))
+        def at(discs, along, side, r, color, w=1.0):
+            discs.add(x + (c * along + nx * side) * size, y + (s * along + ny * side) * size, r * size,
+                      w * alpha, mix(color, WATER, fade))
 
-        frog = Discs()
+        frog, face = Discs(), Discs()
         swimming = self.phase in ("swim", "leave")
         stretch = swimming and math.sin(self.kick * TAU) > 0
         jumping = self.phase == "jump"
         for side in (1, -1):
             if stretch or jumping:
-                at(-2.4, 0.9 * side, 0.45, FROG)
-                at(-3.4, 0.7 * side, 0.4, FROG)
+                at(frog, -2.4, 0.9 * side, 0.45, FROG)
+                at(frog, -3.4, 0.7 * side, 0.4, FROG)
             else:
-                at(-1.5, 1.4 * side, 0.55, FROG)
-                at(-0.5, 1.7 * side, 0.45, FROG)
-            at(1.0, 1.2 * side, 0.35, FROG)
-        at(-0.6, 0, 1.2, FROG)
-        at(0.4, 0, 1.25, FROG)
-        at(-0.3, 0, 0.5, FROG_BACK, 0.7)
-        at(1.4, 0, 0.95, FROG)
+                at(frog, -1.5, 1.4 * side, 0.55, FROG)
+                at(frog, -0.5, 1.7 * side, 0.45, FROG)
+            at(frog, 1.0, 1.2 * side, 0.35, FROG)
+        at(frog, -0.6, 0, 1.2, FROG)
+        at(frog, 0.4, 0, 1.25, FROG)
+        at(frog, -0.3, 0, 0.5, FROG_BACK, 0.7)
+        at(frog, 1.4, 0, 0.95, FROG)
         if self.croak > 0:
-            at(1.9, 0, 0.4 + 0.6 * self.croak, FROG_THROAT, 0.9)
+            at(face, 2.0, 0, 0.3 + 0.6 * self.croak, FROG_THROAT, 0.9)
         for side in (1, -1):
-            at(1.5, 0.75 * side, 0.4, FROG_EYES)
-        return frog
+            at(face, 1.4, 0.75 * side, 0.35, FROG_EYES, 0.9)
+        return frog, face
 
     def shadows(self, shadow: Discs) -> None:
         if self.phase == "jump":
-            frog = self.creature(False)
+            frog, _ = self.creature(False)
             lift = 1.0 + self.lift * 4.0
             for x, y, r in zip(frog.x, frog.y, frog.r):
                 shadow.add(x + lift * SHADOW_DX, y + lift * SHADOW_DY, r, 0.25)
 
     def under(self, frame: np.ndarray, t: float) -> None:
         if self.phase in ("swim", "leave"):
-            self.creature(True).paint(frame)
+            for discs in self.creature(True):
+                discs.paint(frame)
 
     def above(self, frame: np.ndarray, t: float) -> None:
         if self.phase in ("climb", "sit", "jump"):
-            self.creature(False).paint(frame)
+            frog, face = self.creature(False)
+            # Its shadow just below it, outlining it against the pad (it
+            # leaves it behind as it leaps: see shadows)
+            outline = Discs()
+            for x, y, r in zip(frog.x, frog.y, frog.r):
+                outline.add(x + 0.35 * SHADOW_DX, y + 0.35 * SHADOW_DY, r + 0.3, 0.75 * (1 - self.lift), FROG_OUTLINE)
+            outline.paint(frame)
+            frog.paint(frame)
+            face.paint(frame)
 
 
-LEAF_COLORS = [(232, 112, 30), (214, 60, 32), (240, 178, 40), (196, 84, 36)]
 PETAL_COLORS = [(250, 178, 198), (252, 200, 214), (244, 160, 186)]
+# Leaves by season: green in summer, red and gold in autumn, a few withered
+# brown ones in winter
+SUMMER_LEAVES = [(110, 160, 40), (140, 176, 50), (96, 140, 36)]
+AUTUMN_LEAVES = [(232, 112, 30), (214, 60, 32), (240, 178, 40), (196, 84, 36)]
+WINTER_LEAVES = [(150, 104, 52), (120, 84, 44), (170, 132, 72)]
 
 
 class Leaves(PondEvent):
     """Leaves (blossom petals in spring) flutter down onto the water, each
-    landing with a ripple, and drift slowly away on the breeze."""
+    landing with a ripple, and drift slowly away on the breeze: green ones
+    in summer, red and gold in autumn, a few brown ones in winter."""
 
     def __init__(self, pond: Pond) -> None:
         super().__init__(pond)
-        self.petals = 3 <= datetime.now().month <= 5
-        count = random.randint(9, 15) if self.petals else random.randint(4, 7)
+        month = datetime.now().month
+        self.petals = 3 <= month <= 5
+        if self.petals:
+            colors, count = PETAL_COLORS, random.randint(9, 15)
+        elif 6 <= month <= 8:
+            colors, count = SUMMER_LEAVES, random.randint(3, 5)
+        elif 9 <= month <= 11:
+            colors, count = AUTUMN_LEAVES, random.randint(5, 8)
+        else:
+            colors, count = WINTER_LEAVES, random.randint(3, 5)
         wind = random.uniform(0.02, 0.045) * random.choice((1, -1))
         self.leaves = []
         for _ in range(count):
@@ -1110,7 +1237,7 @@ class Leaves(PondEvent):
                 "vx": wind * random.uniform(0.8, 1.2), "vy": random.uniform(-0.008, 0.008),
                 "spin": random.uniform(0, TAU), "turn": random.uniform(-0.01, 0.01),
                 "land": random.randint(frames_for(0.5), frames_for(12)), "fall": frames_for(1.6),
-                "color": random.choice(PETAL_COLORS if self.petals else LEAF_COLORS)})
+                "color": random.choice(colors)})
         self.frame_count = 0
         self.limit = frames_for(80)
 
