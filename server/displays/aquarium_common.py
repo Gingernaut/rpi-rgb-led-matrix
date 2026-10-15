@@ -21,9 +21,11 @@ OBSTACLE_LOOK = 14  # how far ahead fish watch for something to steer around
 
 # After EVENT_SECONDS of quiet (random within) one of the tank's EVENTS starts,
 # picked by weight and never the same one twice running. One thing happens at
-# a time. AQUARIUM_EVENT=<name> shows just that one, a couple of seconds in
-# and then after every EVENT_TEST_SECONDS of quiet.
-EVENT_SECONDS = (30.0, 90.0)
+# a time. A tank's RARE_EVENTS keep their own, longer clocks instead, and
+# take the next turn once theirs runs out. AQUARIUM_EVENT=<name>
+# shows just that one, a couple of seconds in and then after every
+# EVENT_TEST_SECONDS of quiet.
+EVENT_SECONDS = (20.0, 50.0)
 EVENT_TEST_SECONDS = 8.0
 
 
@@ -205,6 +207,7 @@ class Fish:
         self.fleeing = False
         self.calm_in = 0  # frames until a fleeing fish heads back
         self.pace = 1.0  # scales its cruising speed
+        self.homebody = False  # lives in the tank's scenery, so doesn't steer clear of it
         self.tight = self.tight_to = 1.0  # a leader's school spacing, eased
         if leader:
             self.x = leader.x + place[0]
@@ -398,10 +401,15 @@ class Event:
 class Tank:
     """The parts of a tank its events and the director rely on. Subclasses
     set EVENTS ({name: (event class, weight when picking one at random)}),
-    width, height, floor (the top of the floor) and fish."""
+    optionally RARE_EVENTS ({name: (event class, (fewest, most) minutes
+    between visits)}) and scenery ((left, top, right, bottom) boxes the fish
+    steer clear of, but for homebodies), and width, height, floor (the top
+    of the floor) and fish."""
 
     FRAME_SECONDS = FRAME_SECONDS
     EVENTS: dict = {}
+    RARE_EVENTS: dict = {}
+    scenery: list[tuple[float, float, float, float]] = []
 
     width: int
     height: int
@@ -414,19 +422,27 @@ class Tank:
         self.event: Event | None = None
         self.last_event = None
         self.only = os.environ.get("AQUARIUM_EVENT")
-        if self.only and self.only not in self.EVENTS:
-            raise SystemExit(f"AQUARIUM_EVENT must be one of {', '.join(self.EVENTS)}")
+        if self.only and self.only not in self.EVENTS and self.only not in self.RARE_EVENTS:
+            raise SystemExit(f"AQUARIUM_EVENT must be one of {', '.join([*self.EVENTS, *self.RARE_EVENTS])}")
         self.event_wait = frames_for(2.0 if self.only else random.uniform(*EVENT_SECONDS))
+        # Frames until each rare event is due
+        self.rare_wait = {name: self.rare_interval(name) for name in self.RARE_EVENTS}
+
+    def rare_interval(self, name: str) -> int:
+        return frames_for(60 * random.uniform(*self.RARE_EVENTS[name][1]))
 
     def start(self, name: str) -> None:
-        """Begin the named event (from EVENTS) now, cutting short any under
-        way."""
+        """Begin the named event (from EVENTS or RARE_EVENTS) now, cutting
+        short any under way."""
         if self.event:
             self.event.end()
-        self.event = self.EVENTS[name][0](self)
+        self.event = (self.EVENTS.get(name) or self.RARE_EVENTS[name])[0](self)
 
     def direct(self) -> None:
         """Run the event under way, or count down the quiet to the next."""
+        if not self.only:
+            for name in self.rare_wait:
+                self.rare_wait[name] -= 1
         if self.event:
             if not self.event.step():
                 self.event.end()
@@ -441,14 +457,21 @@ class Tank:
         self.event_wait -= 1
         if self.event_wait <= 0:
             self.event_wait = frames_for(random.uniform(*EVENT_SECONDS))
-            names = [name for name in self.EVENTS if name != self.last_event]
-            self.last_event = random.choices(names, [self.EVENTS[name][1] for name in names])[0]
+            due = [name for name, wait in self.rare_wait.items() if wait <= 0]
+            if due:
+                # A rare one's time has come: it takes this turn
+                self.rare_wait[due[0]] = self.rare_interval(due[0])
+                self.last_event = due[0]
+            else:
+                names = [name for name in self.EVENTS if name != self.last_event]
+                self.last_event = random.choices(names, [self.EVENTS[name][1] for name in names])[0]
             self.start(self.last_event)
 
     def give_room(self) -> None:
         """Fish that come too close drift apart vertically, so they don't
         swim along stuck together. A school moves aside as one. They also
-        steer above or below anything an event asks them to avoid."""
+        steer above or below anything an event asks them to avoid, and the
+        scenery."""
         fish = self.fish
         for i, a in enumerate(fish):
             for b in fish[i + 1:]:
@@ -460,11 +483,12 @@ class Tank:
                     up = -1 if 2 * a.y + a.h < 2 * b.y + b.h else 1  # a is above b
                     for f, away in ((a.leader or a, up), (b.leader or b, -up)):
                         f.target_y = min(max(f.y + 3 * away, f.top), f.bottom)
-        if not self.event:
-            return
-        for left, top, right, bottom in self.event.obstacles():
+        boxes = [(box, False) for box in self.scenery]
+        if self.event:
+            boxes += [(box, True) for box in self.event.obstacles()]
+        for (left, top, right, bottom), passing in boxes:
             for f in fish:
-                if f.leader:
+                if f.leader or (f.homebody and not passing):
                     continue
                 # The fish and its school, and the water just ahead of them,
                 # so they start to steer in time

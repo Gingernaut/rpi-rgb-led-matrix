@@ -7,7 +7,7 @@ at startup, so each frame copies a background and draws the moving things.
 Fish are drawn far to near, the far ones hazed toward the water color, some
 seaweed stands in front of them, and the neon tetras swim as a school.
 
-Every minute or so something happens (see EVENTS): a shark cruises through
+Every half minute or so something happens (see EVENTS): a shark cruises through
 and the fish scatter, a whale or an old submarine passes in the distance,
 jellyfish drift by, a sea turtle paddles across, or, now and then, a moray
 eel slides along the bottom or a crab scuttles across the sand. To try one
@@ -26,8 +26,8 @@ import random
 import numpy as np
 
 from aquarium_common import (
-    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite, Tank, flip,
-    frames_for, render_sprite, school, submarine_frames,
+    AMONG, BACK, FLEE_SPEED, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite,
+    Tank, flip, frames_for, render_sprite, school, submarine_frames,
 )
 from matrix_common import fade_lut, mix, put, put_max, run_scene, scale
 
@@ -73,13 +73,33 @@ SPRITES = {
     ),
 }
 
-# (sprite, how many) swimming on their own
+# (sprite, how many) swimming on their own; the clownfish keep to their
+# anemone (see Clownfish)
 TANK = [("clownfish", 2), ("blue_tang", 1), ("yellow_tang", 1)]
+CLOWNFISH = "clownfish"
 # The tetra school: a leader, and each follower's place relative to it. The
 # places are fixed in the tank, not relative to the leader's heading, so when
 # the school turns it wheels around in place and the back becomes the front.
 SCHOOL = "tetra"
 SCHOOL_PLACES = [(-6, -3), (-6, 3), (6, 2), (-12, 0)]
+# Their blue stripes catch the light: brightening toward TETRA_SHINE where a
+# ray falls on them, and flashing as each turns, edge on for a moment
+TETRA_SHINE = (200, 255, 255)
+TETRA_SHINES = 5  # brightness steps, sprites made for each
+TETRA_EDGE = [".CC.", ".RC."]  # turning, seen end on
+TETRA_TURN_FRAMES = 3
+TETRA_FLASH_FADE = 0.88  # a frame
+
+# The clownfish's anemone: a bubble-tip anemone on the sand, its tentacles
+# fanning up from a short column and swaying, bulbs at their tips
+ANEMONE_COLUMN = (150, 62, 92)
+ANEMONE_DISC = (190, 85, 115)
+ANEMONE_TENTACLE = (225, 120, 150)
+ANEMONE_TIP = (255, 200, 215)
+ANEMONE_TENTACLES = 11
+ANEMONE_ROAM = 15  # how far, either side, the clownfish stray from it
+NESTLE_EVERY = 25.0  # seconds, on average, before a clownfish goes home
+NESTLE_SECONDS = (5.0, 12.0)  # how long it stays
 
 BUBBLE = (150, 210, 255)
 
@@ -229,6 +249,78 @@ SUB_BEAM_LENGTH = 26
 
 JELLY_COLORS = [(230, 70, 170), (150, 90, 255), (80, 190, 255), (255, 120, 90)]
 
+# A pufferfish: drawn as a round body that blows up into a spiky ball, its
+# spots stretching with it
+PUFFER_BACK = (215, 180, 85)
+PUFFER_SPOT = (105, 75, 35)
+PUFFER_BELLY = (240, 236, 214)
+PUFFER_FIN = (225, 190, 100)
+PUFFER_SPINE = (165, 135, 70)
+PUFFER_EYE = (15, 15, 20)
+PUFFER_RING = (250, 215, 110)
+PUFFER_SIZE = ((4.5, 2.6), (5.5, 5.5))  # half width and height: swimming, blown up
+PUFFER_SPEED = 0.1
+PUFFER_SECONDS = (4.0, 7.0)  # blown up for this long
+
+# A cuttlefish: its skin flickers through displays while it hovers
+CUTTLE_HEAD = 3  # from where the arms join back to the mantle
+CUTTLE_PROFILE = (  # its half-height, by pixels back from where the arms join
+    [0, 1, 2, 3, 5, 9, 12, 14],
+    [1.6, 2.0, 2.2, 2.0, 2.8, 2.8, 2.2, 1.0],
+)
+CUTTLE_LENGTH = 14
+CUTTLE_ARMS = 4
+CUTTLE_FIN = (230, 215, 190)  # the fin skirt rippling along its edges
+CUTTLE_EYE = (20, 15, 15)
+CUTTLE_LID = (235, 200, 120)
+CUTTLE_SPEED = 0.08
+CUTTLE_DISPLAY_SECONDS = 2.8  # each display it shows while hovering
+CUTTLE_DISPLAYS = ["cloud", "zebra", "cloud", "flush", "mottle"]
+
+# A blue-spotted stingray, its disc seen from a little above
+RAY_LENGTH = 14
+RAY_HALF = 2.6  # the disc's half-height
+RAY_TAIL = 11
+RAY_SKIN = (190, 150, 65)
+RAY_RIM = (120, 92, 40)  # its underside edge, in shadow
+RAY_SPOT = (40, 150, 255)
+RAY_EYE = (25, 20, 10)
+RAY_SPEED = 0.16
+RAY_BURIED_SECONDS = (6.0, 10.0)
+
+# A manta ray passing high overhead, seen from a little below: its outline's
+# half-height (wingtip to wingtip) by fraction of the way from head to tail
+MANTA_LENGTH = 22
+MANTA_SPAN = 8.5
+MANTA_PROFILE = ([0.0, 0.08, 0.2, 0.32, 0.42, 0.5, 0.6, 0.75, 1.0], [0.18, 0.32, 0.62, 0.88, 1.0, 0.72, 0.42, 0.24, 0.12])
+MANTA_TAIL = 10
+MANTA_TOP = (32, 42, 58)
+MANTA_EDGE = (55, 70, 92)
+MANTA_BELLY = (215, 222, 228)
+MANTA_MARK = (60, 66, 80)
+MANTA_SPEED = 0.17
+MANTA_SHADOW = 0.1
+
+# The whale shark (a rare visitor, see RARE_EVENTS): drawn from a profile
+# like the whale, the top and bottom of its body by fraction of the way from
+# its blunt snout to the root of its tail
+WS_LENGTH = 56
+WS_TOP = ([0.0, 0.03, 0.1, 0.2, 0.3, 0.45, 0.6, 0.7, 0.78, 0.82], [2.4, 3.6, 4.6, 5.2, 5.3, 4.8, 3.6, 2.6, 1.6, 1.2])
+WS_BOTTOM = ([0.0, 0.03, 0.1, 0.2, 0.3, 0.45, 0.6, 0.7, 0.78, 0.82], [2.0, 2.8, 3.8, 4.4, 4.4, 3.8, 2.6, 1.8, 1.2, 1.0])
+WS_TAIL = 0.82  # where its tail fin starts
+WS_NOTCH = 0.07  # how deep the fork of its tail cuts in
+WS_BACK = (48, 64, 92)
+WS_SIDE = (80, 96, 124)
+WS_BELLY = (200, 205, 210)
+WS_SPOT = (205, 215, 225)
+WS_LINE = (15, 20, 30)  # its mouth, eye and gills
+WS_FIN = (62, 78, 106)
+WS_SPEED = 0.13
+WS_SHADOW = 0.15
+WS_MINUTES = (8.0, 12.0)  # between visits
+REMORA = [(110, 112, 118), (40, 42, 48)]  # body, stripe
+PILOT_FISH = [(245, 205, 40), (25, 25, 25)]  # body, bars
+
 
 class Bubble:
     __slots__ = ("x", "y", "speed", "phase")
@@ -274,10 +366,150 @@ class Seaweed:
                 put(fb, width, height, x + leaf, y, color)
 
 
-def render_background(width: int, height: int, sand_top: list[int], props: dict) -> list[bytes]:
-    """The water, light rays, and sand for each frame of the loop. props maps
-    (x, y) to the color of an ornament pixel resting on the sand; like the
-    sand, ornaments are lit by the rays where they reach the floor."""
+class Anemone:
+    """A bubble-tip anemone on the sand: a short column, and tentacles fanning
+    up and out from its disc, swaying in the current. Every other tentacle
+    stands in front of a clownfish nestled in it."""
+
+    def __init__(self, cx: int, sand_top: list[int]) -> None:
+        self.cx = cx
+        self.sand_top = sand_top
+        self.disc = min(sand_top[max(cx - 3, 0):cx + 4]) - 2  # the row the tentacles grow from
+        n = ANEMONE_TENTACLES
+        # (base x, lean, length, phase), from the left
+        self.tentacles = []
+        for i in range(n):
+            k = (i - (n - 1) / 2) / ((n - 1) / 2)  # -1 the leftmost to 1 the rightmost
+            length = random.choice((6, 7, 7)) - round(abs(k) * 1.5)
+            self.tentacles.append((cx + 0.5 + k * 3.5, k * 0.95, length, random.uniform(0, 2 * math.pi)))
+
+    def draw(self, fb: bytearray, width: int, height: int, t: float, front: bool) -> None:
+        if not front:
+            # The column, down to the sand, and the disc on top
+            for x in range(self.cx - 2, self.cx + 3):
+                if 0 <= x < width:
+                    for y in range(self.disc + 1, self.sand_top[x]):
+                        put(fb, width, height, x, y, ANEMONE_COLUMN)
+            for x in range(self.cx - 3, self.cx + 4):
+                put(fb, width, height, x, self.disc, ANEMONE_DISC)
+        # The ones at the back a shade darker, so the two rows read apart
+        stalk = ANEMONE_TENTACLE if front else mix(ANEMONE_TENTACLE, ANEMONE_COLUMN, 0.45)
+        for i, (bx, lean, length, phase) in enumerate(self.tentacles):
+            if (i % 2 == 1) != front:
+                continue
+            for j in range(1, length + 1):
+                # Swaying more toward the tip, as a wave runs up it
+                angle = lean + 0.28 * math.sin(t * 1.1 + phase - j * 0.35) * j / length
+                put(fb, width, height, math.floor(bx + math.sin(angle) * j), round(self.disc - math.cos(angle) * j),
+                    ANEMONE_TIP if j == length else stalk)
+
+
+class Clownfish(Fish):
+    """A clownfish that keeps near its anemone: it pokes about within a short
+    way of it, now and then goes home to nestle among the tentacles a while,
+    turning about in them, and when the shark comes it dives in there rather
+    than fleeing, and stays until it's gone."""
+
+    def __init__(self, sprite, width: int, depth: float, cruise: tuple[float, float],
+                 home: Anemone, slot: tuple[float, float]) -> None:
+        self.home = home
+        self.slot = slot  # where it sits in the anemone
+        self.nestled = 0  # frames left at home
+        self.hiding = False
+        super().__init__(sprite, width, max(1, home.disc - 17), home.disc + 1, depth, cruise)
+        self.x = min(max(slot[0] + random.uniform(-ANEMONE_ROAM, ANEMONE_ROAM), 0), width - self.w)
+        self.homebody = True
+        self.pick_turn()
+
+    def pick_turn(self) -> None:
+        # Back and forth within a short way of home
+        lo = max(0.0, self.home.cx - ANEMONE_ROAM - self.w / 2)
+        hi = min(self.tank_width - self.w, self.home.cx + ANEMONE_ROAM - self.w / 2)
+        short = random.uniform(0, 5)
+        self.turn_x = hi - short if self.facing > 0 else lo + short
+
+    def wander(self) -> None:
+        if self.hiding:
+            self.go_home(FLEE_SPEED)
+            if self.calm_in:
+                self.calm_in -= 1
+                if not self.calm_in:
+                    # Lingering a little before venturing out again
+                    self.hiding = False
+                    self.nestled = frames_for(random.uniform(1.5, 5.0))
+            return
+        if self.nestled:
+            self.go_home(1.0)
+            self.nestled -= 1
+            if not self.nestled:
+                self.pick_turn()
+            return
+        if random.random() < 1 / frames_for(NESTLE_EVERY):
+            self.nestled = frames_for(random.uniform(*NESTLE_SECONDS))
+        super().wander()
+
+    def go_home(self, hurry: float) -> None:
+        """Swim to its place in the anemone, at hurry times cruising speed,
+        and turn about there now and then."""
+        sx, sy = self.slot
+        dx = sx - self.x
+        if abs(dx) > 1.5:
+            self.facing = 1 if dx > 0 else -1
+        elif random.random() < 0.006:
+            self.facing = -self.facing
+        want = min(self.cruise * hurry, max(0.0, dx * self.facing) * 0.06)
+        self.speed += (want - self.speed) * 0.15
+        self.target_y = sy
+        climb = max(-0.08 * hurry, min(0.08 * hurry, (sy - self.y) * 0.06))
+        self.vy += (climb - self.vy) * 0.2
+
+    def flee(self, from_x: float) -> None:
+        self.hiding = True
+        self.calm_in = 0
+        self.pause = 0
+
+    def calm(self, delay: int) -> None:
+        if self.hiding:
+            self.calm_in = max(1, delay)
+
+
+class Tetra(Fish):
+    """A neon tetra whose blue stripe catches the light: brighter where a ray
+    falls on it, and flashing as it turns, edge on for a moment."""
+
+    def __init__(self, shines: list[Sprite], edge: Sprite, ray_at, *args) -> None:
+        super().__init__(shines[0], *args)
+        self.shines = shines
+        self.edge = edge
+        self.ray_at = ray_at  # how strongly a light ray falls on a pixel, 0 to 1
+        self.flash = 0.0
+        self.turning = 0  # frames left edge on
+
+    def swim(self) -> None:
+        facing = self.facing
+        super().swim()
+        self.flash *= TETRA_FLASH_FADE
+        if self.turning:
+            self.turning -= 1
+        if self.facing != facing:
+            self.flash = 1.0
+            self.turning = TETRA_TURN_FRAMES
+
+    def draw(self, fb: bytearray, width: int, height: int, t: float) -> None:
+        x, y = self.pose(t)
+        if self.turning:
+            self.edge.draw(fb, width, height, x, y, self.facing, 0)
+            return
+        shine = max(self.flash, min(1.0, 1.6 * self.ray_at(x + self.w // 2, y)))
+        sprite = self.shines[min(len(self.shines) - 1, int(shine * len(self.shines)))]
+        sprite.draw(fb, width, height, x, y, self.facing, int(self.tail))
+
+
+def render_background(width: int, height: int, sand_top: list[int], props: dict) -> tuple[list[bytes], np.ndarray]:
+    """The water, light rays, and sand for each frame of the loop, and how
+    strong the rays are at each pixel (0 to 255) in each. props maps (x, y)
+    to the color of an ornament pixel resting on the sand; like the sand,
+    ornaments are lit by the rays where they reach the floor."""
     floor = min(sand_top)
     y = np.arange(height, dtype=np.float32)[:, None]
     x = np.arange(width, dtype=np.float32)[None, :]
@@ -310,7 +542,8 @@ def render_background(width: int, height: int, sand_top: list[int], props: dict)
     # Brighter where a ray falls
     rgb[:, is_solid] = solid[is_solid] * (0.8 + 0.5 * rays[:, is_solid])[..., None]
     np.minimum(rgb, 255, out=rgb)
-    return [frame.tobytes() for frame in rgb.astype(np.uint8)]
+    lit = (rays * (1 - 0.7 * depth) * 255).astype(np.uint8)
+    return [frame.tobytes() for frame in rgb.astype(np.uint8)], lit
 
 
 # --- Events ------------------------------------------------------------------
@@ -725,6 +958,578 @@ class Crab(Event):
         self.sprite.draw(fb, tank.width, tank.height, x, y, self.facing, int(self.step_phase))
 
 
+def hazed(color: tuple, depth: float) -> tuple:
+    """A color faded toward the water as a sprite at depth would be."""
+    return mix(color, HAZE, depth * 0.22)
+
+
+class Pufferfish(Event):
+    """A pufferfish putters through, its little fins whirring. Partway across
+    something startles it and it blows itself up into a spiky ball, the fish
+    nearby turning away, and hangs there a few seconds, drifting up a little,
+    before it shrinks back down and carries on."""
+
+    depth = 0.3
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        rx = PUFFER_SIZE[0][0]
+        self.x = -rx - 3.0 if self.facing > 0 else tank.width + rx + 3.0  # its middle
+        self.y = random.uniform(9, tank.floor - 9)
+        self.puff_at = tank.width * random.uniform(0.35, 0.65)
+        self.puffed = False
+        self.blown = 0.0  # from 0 swimming to 1 blown up
+        self.hold = 0  # frames left blown up
+        self.speed = PUFFER_SPEED
+        self.frame_count = 0
+        # Spots on its back, in its own coordinates (+u toward its head), so
+        # they stretch as it blows up
+        self.spots = [(random.uniform(-0.75, 0.55), random.uniform(-0.85, -0.05)) for _ in range(7)]
+        self.colors = {
+            name: hazed(color, self.depth) for name, color in (
+                ("back", PUFFER_BACK), ("spot", PUFFER_SPOT), ("belly", PUFFER_BELLY), ("fin", PUFFER_FIN),
+                ("spine", PUFFER_SPINE), ("eye", PUFFER_EYE), ("ring", PUFFER_RING),
+            )
+        }
+
+    def size(self) -> tuple[float, float]:
+        e = self.blown * self.blown * (3 - 2 * self.blown)
+        (rx0, ry0), (rx1, ry1) = PUFFER_SIZE
+        return rx0 + (rx1 - rx0) * e, ry0 + (ry1 - ry0) * e
+
+    @property
+    def cy(self) -> float:
+        return self.y + 0.8 * math.sin(self.frame_count * FRAME_SECONDS * 0.9) * (1 - self.blown)
+
+    def step(self) -> bool:
+        self.frame_count += 1
+        if not self.puffed and (self.x - self.puff_at) * self.facing >= 0:
+            self.puffed = True
+            self.hold = frames_for(random.uniform(*PUFFER_SECONDS))
+            # The fish close by and heading its way turn away
+            for fish in self.free_fish():
+                middle = fish.x + fish.w / 2
+                if abs(middle - self.x) < 16 and (self.x - middle) * fish.facing > 0:
+                    fish.turn()
+        if self.hold:
+            self.hold -= 1
+            self.blown = min(1.0, self.blown + 0.07)
+            self.speed *= 0.9
+            self.y -= 0.012
+        else:
+            self.blown = max(0.0, self.blown - 0.02)
+            if not self.blown:
+                self.speed += (PUFFER_SPEED - self.speed) * 0.03
+        self.x += self.speed * self.facing
+        return -10 < self.x < self.tank.width + 10
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        rx, ry = self.size()
+        return [(self.x - rx - 2, self.cy - ry - 2, self.x + rx + 2, self.cy + ry + 2)]
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        c = self.colors
+        f = self.facing
+        rx, ry = self.size()
+        cx, cy = self.x, self.cy
+        belly_line = 0.3 - 0.25 * self.blown
+        for py in range(math.floor(cy - ry), math.ceil(cy + ry) + 1):
+            v = (py + 0.5 - cy) / ry
+            for px in range(math.floor(cx - rx), math.ceil(cx + rx) + 1):
+                u = (px + 0.5 - cx) / rx * f
+                if u * u + v * v > 1.0:
+                    continue
+                if v > belly_line:
+                    color = c["belly"]
+                elif any((u - su) ** 2 + (v - sv) ** 2 < 0.045 for su, sv in self.spots):
+                    color = c["spot"]
+                else:
+                    color = c["back"]
+                put(fb, width, height, px, py, color)
+        # Its tail fan, beating
+        beat = int(self.frame_count * 0.25) % 2
+        tx = math.floor(cx - (rx + 0.5) * f)
+        my = math.floor(cy)
+        for dy in (-1, 0, 1):
+            put(fb, width, height, tx, my + dy, c["fin"])
+        for dy in ((-2, -1, 1, 2) if beat else (-1, 0, 1)):
+            put(fb, width, height, tx - f, my + dy, c["fin"])
+        # Spines standing out as it blows up
+        if self.blown > 0.3:
+            spine = scale(c["spine"], min(1.0, (self.blown - 0.3) / 0.5))
+            for k in range(12):
+                a = k * math.pi / 6 + 0.26
+                put(fb, width, height, math.floor(cx + math.cos(a) * (rx + 1)), math.floor(cy + math.sin(a) * (ry + 1)), spine)
+        # A big ringed eye, and a little fin whirring behind it
+        ex, ey = math.floor(cx + 0.45 * rx * f), math.floor(cy - 0.3 * ry)
+        put(fb, width, height, ex, ey, c["eye"])
+        put(fb, width, height, ex, ey - 1, c["ring"])
+        put(fb, width, height, math.floor(cx - 0.05 * rx * f) - f * beat, my + 1, c["fin"])
+
+
+class Cuttlefish(Event):
+    """A cuttlefish glides in on the fin skirt rippling along its sides, arms
+    held together ahead of it, and hovers a while partway across, its skin
+    flickering through its displays: dark clouds rolling forward over it,
+    bold zebra stripes, a red-purple flush, then back to a sandy mottle
+    before it moves on."""
+
+    depth = 0.35
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        # x is where its arms join its head; the rest of it starts out of view
+        self.x = -CUTTLE_ARMS - 1.0 if self.facing > 0 else tank.width + CUTTLE_ARMS + 1.0
+        self.y = random.uniform(8, tank.floor - 8)
+        self.stop_at = tank.width * random.uniform(0.42, 0.58) + CUTTLE_LENGTH / 2 * self.facing
+        self.display = frames_for(CUTTLE_DISPLAY_SECONDS)
+        self.hover = self.display * len(CUTTLE_DISPLAYS)  # frames left hovering
+        self.held = 0  # frames it's hovered
+        self.speed = CUTTLE_SPEED
+        self.frame_count = 0
+        self.noise = {(u, r): random.random() for u in range(-CUTTLE_ARMS, CUTTLE_LENGTH + 1) for r in range(-4, 5)}
+
+    @property
+    def cy(self) -> float:
+        return self.y + 0.7 * math.sin(self.frame_count * FRAME_SECONDS * 0.5)
+
+    def step(self) -> bool:
+        self.frame_count += 1
+        if self.hover and (self.x - self.stop_at) * self.facing >= 0:
+            self.hover -= 1
+            self.held += 1
+            self.speed *= 0.95
+        else:
+            self.speed += (CUTTLE_SPEED - self.speed) * 0.02
+        self.x += self.speed * self.facing
+        tail = self.x - CUTTLE_LENGTH * self.facing
+        return (tail <= self.tank.width + 1) if self.facing > 0 else (tail >= -1)
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        left, right = sorted((self.x + CUTTLE_ARMS * self.facing, self.x - CUTTLE_LENGTH * self.facing))
+        return [(left, self.cy - 4, right, self.cy + 4)]
+
+    def modes(self) -> tuple[str, str, float]:
+        """The display showing, the one before it, and how far it's taken
+        over from that one (0 to 1)."""
+        if not self.held or not self.hover:
+            return "mottle", "mottle", 1.0
+        i = min(self.held // self.display, len(CUTTLE_DISPLAYS) - 1)
+        before = CUTTLE_DISPLAYS[i - 1] if i else "mottle"
+        return CUTTLE_DISPLAYS[i], before, min(1.0, (self.held - i * self.display) / frames_for(0.8))
+
+    def skin(self, mode: str, u: int, r: int, t: float) -> tuple:
+        n = self.noise.get((u, r), 0.5)
+        if mode == "mottle":
+            return (215, 185, 135) if n > 0.72 else (100, 70, 48) if n < 0.25 else (160, 120, 82)
+        if mode == "cloud":
+            band = math.sin(u * 0.9 + t * 6.5)
+            return mix((185, 145, 105), (55, 38, 32), max(0.0, (band - 0.3) / 0.7))
+        if mode == "zebra":
+            return (235, 228, 215) if math.sin(u * 1.7 + r * 0.9) > 0.1 else (40, 30, 30)
+        return (245, 205, 215) if n > 0.85 else (175, 55, 95)  # flush
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        f = self.facing
+        t = self.frame_count * FRAME_SECONDS
+        cy = self.cy
+        my = round(cy)
+        mode, before, k = self.modes()
+
+        def color_at(u: int, r: int) -> tuple:
+            color = self.skin(mode, u, r, t)
+            if k < 1:
+                color = mix(self.skin(before, u, r, t), color, k)
+            return hazed(color, self.depth)
+
+        fin = hazed(mix(CUTTLE_FIN, HAZE, 0.4), self.depth)
+        x0 = math.floor(self.x)
+        for u in range(CUTTLE_LENGTH + 1):
+            px = x0 - u * f
+            half = float(np.interp(u, *CUTTLE_PROFILE))
+            top, bottom = round(cy - half), round(cy + half)
+            for py in range(top, bottom + 1):
+                put(fb, width, height, px, py, color_at(u, py - my))
+            # The fin skirt along the mantle, a wave running down it
+            if u >= CUTTLE_HEAD:
+                wave = math.sin(u * 1.3 - t * 9)
+                if wave > -0.3:
+                    put(fb, width, height, px, top - 1, fin)
+                if wave < 0.3:
+                    put(fb, width, height, px, bottom + 1, fin)
+        # Its arms, held together and curling a little at the tips
+        for a in range(1, CUTTLE_ARMS + 1):
+            rows = (-1, 0, 1) if a <= 2 else (-1, 0) if a == 3 else (0,)
+            curl = round(0.4 * math.sin(t * 2 + a)) if a >= 3 else 0
+            for r in rows:
+                put(fb, width, height, x0 + a * f, my + r + curl, scale(color_at(0, r), 0.85))
+        # An eye with a pale lid
+        put(fb, width, height, x0 - 2 * f, my - 1, hazed(CUTTLE_EYE, self.depth))
+        put(fb, width, height, x0 - 2 * f, my - 2, hazed(CUTTLE_LID, self.depth))
+
+
+class Stingray(Event):
+    """A blue-spotted stingray glides in low, the edges of its disc rippling,
+    and settles on the sand partway across. It flutters itself under,
+    kicking up sand, and lies there a while with only its eyes showing,
+    then lifts off in a puff of sand and glides away."""
+
+    depth = 0.15
+
+    class Grain:
+        __slots__ = ("x", "y", "vx", "vy", "age", "life", "color")
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        self.x = -2.0 if self.facing > 0 else tank.width + 1.0  # its snout
+        # Where it settles: on open sand, clear of the anemone and the chest
+        # (land_at is where its snout stops)
+        a = tank.anemone.cx
+        chest = tank.chest_x + len(CHEST[0]) / 2
+        spots = [x for x in range(round(tank.width * 0.25), round(tank.width * 0.75))
+                 if abs(x - RAY_LENGTH / 2 * self.facing - a) > RAY_LENGTH / 2 + 8
+                 and abs(x - RAY_LENGTH / 2 * self.facing - chest) > RAY_LENGTH / 2 + 4]
+        self.land_at = random.choice(spots) if spots else tank.width * random.uniform(0.35, 0.65)
+        # Gliding low, but clear over the anemone
+        self.cruise_y = tank.anemone.disc - 8 - random.uniform(0, 3)
+        self.y = self.cruise_y
+        self.state = "glide"
+        self.timer = 0
+        self.speed = RAY_SPEED
+        self.cover = 0.0  # how buried it is
+        self.flap = 1.0  # how hard its edges ripple
+        self.phase = 0.0
+        self.frame_count = 0
+        self.grains: list[Stingray.Grain] = []
+        self.spots = {(u, r) for u in range(2, RAY_LENGTH - 1) for r in range(-2, 2) if random.random() < 0.16}
+        self.sand = {(u, r): random.choice(SAND) for u in range(-1, RAY_LENGTH + RAY_TAIL + 2) for r in range(-4, 4)}
+        self.colors = {name: hazed(color, self.depth) for name, color in (
+            ("skin", RAY_SKIN), ("rim", RAY_RIM), ("spot", RAY_SPOT), ("eye", RAY_EYE))}
+
+    def rest_y(self) -> float:
+        """Its middle when lying on the sand under it."""
+        tank = self.tank
+        left, right = sorted((self.x, self.x - RAY_LENGTH * self.facing))
+        cols = range(max(math.floor(left), 0), min(math.ceil(right) + 1, tank.width))
+        ground = min(tank.sand_top[c] for c in cols) if cols else tank.floor
+        return ground - 0.5 - RAY_HALF * 0.8
+
+    def kick(self, n: int, strength: float) -> None:
+        """Throw up n grains of sand from under its disc."""
+        tank = self.tank
+        for _ in range(n):
+            g = Stingray.Grain()
+            g.x = self.x - random.uniform(0, RAY_LENGTH) * self.facing
+            col = min(max(int(g.x), 0), tank.width - 1)
+            g.y = tank.sand_top[col] - 1.0
+            g.vx = random.uniform(-0.25, 0.25)
+            g.vy = -random.uniform(0.1, 0.35) * strength
+            g.age, g.life = 0, frames_for(random.uniform(0.8, 2.0))
+            g.color = random.choice(SAND)
+            self.grains.append(g)
+
+    def step(self) -> bool:
+        self.frame_count += 1
+        state = self.state
+        if state in ("glide", "leave"):
+            self.speed += (RAY_SPEED - self.speed) * 0.03
+            self.y += (self.cruise_y - self.y) * 0.02
+            self.flap += (1 - self.flap) * 0.05
+            if state == "glide" and (self.x - self.land_at) * self.facing >= 0:
+                self.state = "land"
+        elif state == "land":
+            self.speed *= 0.97
+            self.y += (self.rest_y() - self.y) * 0.04
+            if abs(self.rest_y() - self.y) < 0.2 and self.speed < 0.02:
+                self.state, self.timer = "bury", frames_for(2.0)
+        elif state == "bury":
+            self.speed *= 0.9
+            self.flap = 2.0
+            self.cover = min(0.85, self.cover + 0.85 / frames_for(2.0))
+            if random.random() < 0.6:
+                self.kick(1, 0.6)
+            self.timer -= 1
+            if self.timer <= 0:
+                self.state, self.timer = "rest", frames_for(random.uniform(*RAY_BURIED_SECONDS))
+        elif state == "rest":
+            self.flap *= 0.9
+            self.timer -= 1
+            if self.timer <= 0:
+                self.state, self.timer = "lift", frames_for(1.0)
+                self.kick(25, 1.0)
+        elif state == "lift":
+            self.cover = max(0.0, self.cover - 0.06)
+            self.flap = 1.6
+            self.y -= 0.05
+            self.speed += (RAY_SPEED - self.speed) * 0.03
+            self.timer -= 1
+            if self.timer <= 0:
+                self.state = "leave"
+        self.phase += 0.03 + 0.12 * self.flap
+        self.x += self.speed * self.facing
+
+        tank = self.tank
+        grains = []
+        for g in self.grains:
+            g.age += 1
+            g.vy += 0.015
+            g.x += g.vx
+            g.y += g.vy
+            col = int(g.x)
+            if g.age < g.life and 0 <= col < tank.width and not (g.vy > 0 and g.y >= tank.sand_top[col]):
+                grains.append(g)
+        self.grains = grains
+        tail = self.x - (RAY_LENGTH + RAY_TAIL) * self.facing
+        return (tail <= tank.width) if self.facing > 0 else (tail >= 0)
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        left, right = sorted((self.x, self.x - RAY_LENGTH * self.facing))
+        return [(left, self.y - RAY_HALF - 1, right, self.y + RAY_HALF + 1)]
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        c = self.colors
+        f = self.facing
+        cy = self.y
+        my = round(cy)
+        cover = self.cover
+        x0 = math.floor(self.x)
+
+        def buried(color: tuple, u: int, r: int, amount: float = cover) -> tuple:
+            return mix(color, self.sand[(u, max(-4, min(3, r)))], amount) if amount > 0 else color
+
+        for u in range(RAY_LENGTH + 1):
+            s = u / RAY_LENGTH
+            half = RAY_HALF * math.sqrt(max(0.0, math.sin(math.pi * min(1.0, 0.06 + s))))
+            ripple = 0.7 * self.flap * math.sin(s * 10 - self.phase) * min(1.0, 2 * s)
+            top, bottom = round(cy - half - ripple), round(cy + half * 0.8 - ripple * 0.5)
+            px = x0 - u * f
+            for py in range(top, bottom + 1):
+                r = py - my
+                v = (py - cy) / max(half, 0.5)
+                color = c["rim"] if v > 0.45 else c["spot"] if (u, r) in self.spots else c["skin"]
+                put(fb, width, height, px, py, buried(color, u, r))
+        # Its eyes, bumps on top near the front, still showing when buried
+        for u in (3, 5):
+            put(fb, width, height, x0 - u * f, my - 2, c["eye"])
+        # The tail, blue stripes along it and a barb near its root
+        for k in range(RAY_TAIL):
+            u = RAY_LENGTH + k
+            ty = round(cy + 0.4 + math.sin(self.phase * 0.5 - k * 0.5) * k / RAY_TAIL)
+            color = c["spot"] if k % 3 == 1 else c["skin"]
+            put(fb, width, height, x0 - u * f, ty, buried(color, u, ty - my, cover * 0.7))
+            if k == 3:
+                put(fb, width, height, x0 - u * f, ty - 1, buried(c["rim"], u, ty - my - 1, cover * 0.7))
+        for g in self.grains:
+            put(fb, width, height, math.floor(g.x), math.floor(g.y), g.color)
+
+
+class Manta(Event):
+    """A manta ray glides past high overhead, seen from a little below: broad
+    wings beating slowly in a wave from root to tip, a pale belly between
+    dark wing edges, horn-like head fins curled ahead and a thin tail
+    behind. Its shadow dims the light as it goes."""
+
+    layer = BACK
+    depth = 0.6  # (for its haze)
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        self.nose = -3.0 if self.facing > 0 else tank.width + 3.0
+        self.y = random.uniform(8.5, 11.0)
+        self.beat = random.uniform(0, 2 * math.pi)
+        self.beat_step = 2 * math.pi / frames_for(3.8)
+        self.colors = {name: np.array(hazed(color, self.depth), np.float32) for name, color in (
+            ("top", MANTA_TOP), ("edge", MANTA_EDGE), ("belly", MANTA_BELLY), ("mark", MANTA_MARK))}
+
+    def step(self) -> bool:
+        self.nose += MANTA_SPEED * self.facing
+        self.beat += self.beat_step
+        width = self.tank.width
+        tail = self.nose - (MANTA_LENGTH + MANTA_TAIL) * self.facing
+        left, right = sorted((self.nose, self.nose - MANTA_LENGTH * self.facing))
+        self.shade = 1 - MANTA_SHADOW * max(0.0, min(right, width) - max(left, 0)) / width
+        return (tail <= width) if self.facing > 0 else (tail >= 0)
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        f = self.facing
+        c = self.colors
+        view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
+        s = (self.nose - (np.arange(width) + 0.5)) * f / MANTA_LENGTH
+        cols = np.flatnonzero((s >= 0) & (s <= 1))
+        lift = 0.0
+        if len(cols):
+            s = s[cols]
+            span = np.interp(s, *MANTA_PROFILE) * MANTA_SPAN
+            # The wingbeat runs from the root out, raising and lowering both
+            # wings: the upper outline reaches higher as the lower one draws in
+            flap = np.sin(self.beat - s * 2.2)
+            center = self.y - 0.6 * flap
+            top = center - span * (0.8 + 0.25 * flap)
+            bottom = center + span * (0.8 - 0.25 * flap)
+            y = np.arange(height, dtype=np.float32)[:, None] + 0.5
+            cover = np.clip(np.minimum(y - top, bottom - y) + 0.5, 0, 1)
+            w = (y - center) / np.maximum(span, 0.5)
+            color = np.broadcast_to(c["top"], (height, len(cols), 3)).copy()
+            belly = (np.abs(w) < 0.5) & (s > 0.08) & (s < 0.66)
+            color[belly] = c["belly"]
+            body_col = np.floor(s * MANTA_LENGTH).astype(int)[None, :]
+            row = np.floor(y - center).astype(int)
+            color[belly & (((body_col == 9) & (row == 1)) | ((body_col == 11) & (row == -1))
+                           | ((body_col == 12) & (row == 2)))] = c["mark"]
+            # Gill slits
+            color[belly & np.isin(body_col, (4, 5, 6)) & (np.abs(row) == 2)] = c["mark"]
+            color[(np.abs(w) > 0.85) & (cover > 0)] = c["edge"]
+            water = view[:, cols].astype(np.float32)
+            water += (color - water) * cover[..., None]
+            view[:, cols] = water.astype(np.uint8)
+            lift = 0.6 * math.sin(self.beat)
+        # Its head fins, curled ahead, and the mouth between them
+        nx, ny = math.floor(self.nose), math.floor(self.y - lift)
+        top = tuple(int(v) for v in c["top"])
+        for dx, dy in ((1, -2), (2, -2), (2, -1), (1, 1), (2, 1), (2, 0)):
+            put(fb, width, height, nx + dx * f, ny + dy, top)
+        # The thin tail
+        for k in range(MANTA_TAIL):
+            put(fb, width, height, math.floor(self.nose - (MANTA_LENGTH + k) * f),
+                math.floor(self.y + 0.5 * math.sin(self.beat - 2.2 - k * 0.3)), top)
+
+
+class WhaleShark(Event):
+    """Once in a while (see RARE_EVENTS) a whale shark cruises slowly through,
+    nearly as long as the tank is wide: a broad flat head with a wide mouth,
+    its dark back starred with pale spots and checkered with pale lines, its
+    tall tail sweeping. Remoras ride under its belly and little golden pilot
+    fish swim along ahead of its mouth. The fish slow down to watch."""
+
+    depth = 0.55
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        # Its pilot fish come into view first
+        self.nose = -10.0 if self.facing > 0 else tank.width + 10.0
+        self.y = tank.floor * random.uniform(0.42, 0.52)
+        self.beat = 0.0
+        self.beat_step = 2 * math.pi / frames_for(4.5)
+        self.frame_count = 0
+        self.pilots = [(random.uniform(2, 9), random.uniform(-3, 3), random.uniform(0, 2 * math.pi))
+                       for _ in range(3)]
+        self.colors = {name: hazed(color, self.depth) for name, color in (
+            ("back", WS_BACK), ("side", WS_SIDE), ("belly", WS_BELLY), ("spot", WS_SPOT), ("line", WS_LINE),
+            ("fin", WS_FIN), ("remora", REMORA[0]), ("stripe", REMORA[1]), ("pilot", PILOT_FISH[0]),
+            ("bar", PILOT_FISH[1]))}
+        for fish in tank.fish:
+            fish.pace = 0.6
+
+    def end(self) -> None:
+        for fish in self.tank.fish:
+            fish.pace = 1.0
+
+    def step(self) -> bool:
+        self.frame_count += 1
+        self.nose += WS_SPEED * self.facing
+        self.beat += self.beat_step
+        width = self.tank.width
+        tail = self.nose - WS_LENGTH * self.facing
+        left, right = sorted((self.nose, tail))
+        self.shade = 1 - WS_SHADOW * max(0.0, min(right, width) - max(left, 0)) / width
+        return (tail <= width) if self.facing > 0 else (tail >= 0)
+
+    def edges(self, s):
+        """The top, bottom and middle of its body at s (a number or array)
+        from the snout (0) to the tip of its tail (1)."""
+        top = np.interp(s, *WS_TOP)
+        bottom = np.interp(s, *WS_BOTTOM)
+        tail = np.clip((s - WS_TAIL) / (1 - WS_TAIL), 0, 1) ** 1.3 * (0.9 + 0.1 * math.sin(self.beat))
+        top = top + 6.8 * tail + np.interp(s, [0.42, 0.5, 0.54], [0, 4.5, 0]) + np.interp(s, [0.71, 0.74, 0.76], [0, 1.6, 0])
+        bottom = bottom + 4.2 * tail
+        center = self.y + 0.8 * np.clip((s - 0.5) / 0.5, 0, 1) ** 2 * math.sin(self.beat)
+        return center - top, center + bottom, center
+
+    def body_x(self, s: float) -> float:
+        return self.nose - s * WS_LENGTH * self.facing
+
+    def body_y(self, s: float, v: float) -> float:
+        top, bottom, _ = self.edges(s)
+        return float(top + v * (bottom - top))
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        c = self.colors
+        f = self.facing
+        s = (self.nose - (np.arange(width) + 0.5)) * f / WS_LENGTH
+        cols = np.flatnonzero((s >= 0) & (s <= 1))
+        if len(cols):
+            s = s[cols]
+            top, bottom, center = self.edges(s)
+            y = np.arange(height, dtype=np.float32)[:, None] + 0.5
+            cover = np.clip(np.minimum(y - top, bottom - y) + 0.5, 0, 1)
+            # The fork of its tail
+            k = 1 - np.sqrt(np.clip((1 - s) / WS_NOTCH, 0, 1))
+            gap = np.maximum(center - k * (center - top) - y, y - center - k * (bottom - center))
+            cover *= np.where(k > 0, np.clip(gap + 0.5, 0, 1), 1)
+
+            v = (y - top) / np.maximum(bottom - top, 0.1)
+            side = np.clip(v * 1.5, 0, 1)[..., None]
+            color = np.array(c["back"], np.float32) * (1 - side) + np.array(c["side"], np.float32) * side
+            body_col = np.floor(s * WS_LENGTH).astype(int)[None, :]
+            row = np.floor(y - center).astype(int)
+            upper = (v < 0.62) & (s < WS_TAIL)
+            # Pale lines across its flank, spots between them, and smaller,
+            # closer spots on its head
+            lines = upper & (body_col % 5 == 2) & (s > 0.14) & (s < 0.72)
+            color[lines] = color[lines] * 0.65 + np.array(c["spot"], np.float32) * 0.35
+            spots = upper & ~lines & (
+                ((s >= 0.14) & (((body_col % 5 == 0) & (row % 3 == 0)) | ((body_col % 5 == 4) & (row % 3 == 2))))
+                | ((s < 0.14) & ((body_col + row) % 3 == 0) & (row % 2 == 0)))
+            color[spots] = c["spot"]
+            color[(v >= 0.62) & (s < WS_TAIL - 0.02)] = c["belly"]
+            # Its wide mouth across the front, and gill slits
+            color[(s < 0.05) & (np.abs(v - 0.6) * (bottom - top) < 0.5)] = c["line"]
+            gills = np.isin(body_col, (8, 10, 12)) & (v > 0.3) & (v < 0.75)
+            color[gills] = color[gills] * 0.55
+
+            view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
+            water = view[:, cols].astype(np.float32)
+            water += (color - water) * cover[..., None]
+            view[:, cols] = water.astype(np.uint8)
+
+        # A small eye just behind the corner of its mouth
+        put(fb, width, height, math.floor(self.body_x(0.075)), math.floor(self.body_y(0.075, 0.45)), c["line"])
+        # A long pectoral fin, angled down and back
+        rx, ry = self.body_x(0.2), self.body_y(0.2, 0.9)
+        angle = 0.75 + 0.1 * math.sin(self.beat * 0.5)
+        dx, dy = -math.cos(angle) * f, math.sin(angle)
+        for k in range(7):
+            for i in range(2 if k < 5 else 1):
+                put(fb, width, height, math.floor(rx + dx * k - i * f), math.floor(ry + dy * k), c["fin"])
+        # Remoras riding under its belly
+        for rs in (0.3, 0.42):
+            x, y = math.floor(self.body_x(rs)), math.floor(self.edges(rs)[1] + 0.5)
+            for i in range(5):
+                put(fb, width, height, x - i * f, y, c["remora"])
+                put(fb, width, height, x - i * f, y + 1, c["stripe"] if 0 < i < 4 else c["remora"])
+        # Its pilot fish ahead of its mouth
+        clock = self.frame_count * FRAME_SECONDS
+        mouth_y = self.body_y(0.0, 0.5)
+        for ahead, dy, phase in self.pilots:
+            px = math.floor(self.nose + (ahead + 0.8 * math.sin(clock * 0.7 + phase)) * f)
+            py = math.floor(mouth_y + dy + 0.6 * math.sin(clock * 2 + phase))
+            for i in range(4):  # from its head back
+                color = c["bar"] if i == 2 else c["pilot"]
+                put(fb, width, height, px - i * f, py, color)
+                if i < 3:
+                    put(fb, width, height, px - i * f, py + 1, color)
+
+
 # name: (event, weight when picking one at random)
 EVENTS = {
     "shark": (Shark, 3),
@@ -734,11 +1539,20 @@ EVENTS = {
     "turtle": (Turtle, 2),
     "moray": (Moray, 1),  # only now and then
     "crab": (Crab, 1),  # only now and then
+    "cuttlefish": (Cuttlefish, 2),
+    "pufferfish": (Pufferfish, 2),
+    "stingray": (Stingray, 2),
+    "manta": (Manta, 2),
+}
+# name: (event, (fewest, most) minutes between its visits)
+RARE_EVENTS = {
+    "whale-shark": (WhaleShark, WS_MINUTES),
 }
 
 
 class Aquarium(Tank):
     EVENTS = EVENTS
+    RARE_EVENTS = RARE_EVENTS
 
     def __init__(self, width: int, height: int) -> None:
         self.width = width
@@ -765,7 +1579,15 @@ class Aquarium(Tank):
         }
         stone_y = self.sand_top[self.bubbler_x] - 1
         props[(self.bubbler_x, stone_y)] = props[(self.bubbler_x + 1, stone_y)] = STONE
-        self.background = render_background(width, height, self.sand_top, props)
+        self.background, self.rays = render_background(width, height, self.sand_top, props)
+
+        # The anemone in the open sand between them, as near the middle of it
+        # as it fits
+        left, right = sorted((self.chest_x + chest_w // 2, self.bubbler_x))
+        lo, hi = left + chest_w // 2 + 9, right - 8
+        self.anemone = a = Anemone(round(random.uniform(lo, hi)) if lo <= hi else (left + right) // 2, self.sand_top)
+        # The other fish keep out of it
+        self.scenery = [(a.cx - 8, a.disc - 7, a.cx + 9, height)]
         self.chest_lid = render_sprite(CHEST_PALETTE, CHEST_OPEN)
         self.chest_timer = frames_for(random.uniform(*CHEST_SECONDS))
 
@@ -776,6 +1598,7 @@ class Aquarium(Tank):
         spots = [
             x for x in spots
             if x < width and not self.chest_x - 1 <= x <= self.chest_x + chest_w and abs(x - self.bubbler_x) > 1
+            and abs(x - self.anemone.cx) > 8
         ]
         front = set(random.sample(spots, min(2, len(spots) // 3)))
         self.back_weeds = [
@@ -794,20 +1617,42 @@ class Aquarium(Tank):
         random.shuffle(depths)
         top, bottom = 1, floor - 1
         self.fish = []
+        # The clownfish's places in the anemone: side by side, one a little
+        # higher, among the tentacles
+        a = self.anemone
+        slots = [(a.cx - 8.0, a.disc - 7.0), (a.cx + 1.0, a.disc - 5.0)]
+        random.shuffle(slots)
         for kind, depth in zip(kinds, depths):
             sprite = Sprite(*SPRITES[kind], depth, HAZE)
             cruise = (0.22, 0.34) if kind == SCHOOL else (0.12, 0.28)
+            if kind == CLOWNFISH:
+                self.fish.append(Clownfish(sprite, width, depth, cruise, a, slots.pop()))
+            elif kind == SCHOOL:
+                palette, frames = SPRITES[kind]
+                shines = [
+                    Sprite({**palette, "C": mix(palette["C"], TETRA_SHINE, k / (TETRA_SHINES - 1))}, frames, depth, HAZE)
+                    for k in range(TETRA_SHINES)
+                ]
+                edge = Sprite({**palette, "C": TETRA_SHINE}, [TETRA_EDGE], depth, HAZE)
 
-            def make_fish(leader=None, place=(0, 0)):
-                return Fish(sprite, width, top, bottom, depth, cruise, leader, place)
+                def make_tetra(leader=None, place=(0, 0)):
+                    return Tetra(shines, edge, self.ray_at, width, top, bottom, depth, cruise, leader, place)
 
-            self.fish += school(make_fish, SCHOOL_PLACES) if kind == SCHOOL else [make_fish()]
+                self.fish += school(make_tetra, SCHOOL_PLACES)
+            else:
+                self.fish.append(Fish(sprite, width, top, bottom, depth, cruise))
         self.fish.sort(key=lambda fish: -fish.depth)
 
         self.bubbles: list[Bubble] = []
         self.frame_count = 0
         self.init_events()
         self.shade_luts: dict[int, bytes] = {}
+
+    def ray_at(self, x: int, y: int) -> float:
+        """How strongly a light ray falls on pixel (x, y) now, 0 to 1."""
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.rays[self.frame_count % LOOP_FRAMES, y, x] / 255
+        return 0.0
 
     def frame(self) -> bytearray:
         width, height = self.width, self.height
@@ -830,6 +1675,7 @@ class Aquarium(Tank):
 
         for weed in self.back_weeds:
             weed.draw(fb, width, height, t)
+        self.anemone.draw(fb, width, height, t, front=False)
 
         # Every so often the chest lid lifts and lets out a burst of bubbles
         self.chest_timer -= 1
@@ -872,6 +1718,7 @@ class Aquarium(Tank):
         if among:
             among.draw(fb, t)
 
+        self.anemone.draw(fb, width, height, t, front=True)
         for weed in self.front_weeds:
             weed.draw(fb, width, height, t)
 
