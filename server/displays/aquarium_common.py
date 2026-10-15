@@ -27,6 +27,60 @@ EVENT_SECONDS = (30.0, 90.0)
 EVENT_TEST_SECONDS = 8.0
 
 
+# A jellyfish drifting sideways, facing right: its bell ("R" rim, "G" bell,
+# "H" core) pulsing through the frames, tentacles ("t") trailing behind
+JELLY_FRAMES = [
+    [
+        "...RRR..",
+        "..RGGGR.",
+        ".RGGHGGR",
+        ".RRRRRRR",
+        ".t.t.t.t",
+        "t.t.t.t.",
+        ".t.t.t..",
+        "t.t.t...",
+        ".t.t....",
+        "t.t.....",
+    ],
+    [
+        "...RRR..",
+        "..RGGGR.",
+        "..RGHGR.",
+        "..RGGGR.",
+        "..RRRRR.",
+        ".t.t.t..",
+        "t.t.t...",
+        ".t.t....",
+        "t.t.....",
+        ".t......",
+    ],
+    [
+        "...RR...",
+        "..RGGR..",
+        "..RGHR..",
+        "..RGGR..",
+        "..RGGR..",
+        "..RRRR..",
+        ".t.t.t..",
+        "t.t.t...",
+        ".t.t....",
+        "t.t.....",
+    ],
+    [
+        "...RRR..",
+        "..RGGGR.",
+        "..RGHGR.",
+        "..RGGGR.",
+        "..RRRRR.",
+        ".t.t.t..",
+        "t.t.t...",
+        ".t.t....",
+        "t.t.....",
+        ".t......",
+    ],
+]
+
+
 def frames_for(seconds: float) -> int:
     return max(1, round(seconds / FRAME_SECONDS))
 

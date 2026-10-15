@@ -23,8 +23,10 @@ import random
 
 import numpy as np
 
-from aquarium_common import AMONG, BACK, FRAME_SECONDS, Event, Fish, Sprite, Tank, frames_for, render_sprite, school
-from matrix_common import fade_lut, mix, put, put_max, run_scene
+from aquarium_common import (
+    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, Event, Fish, Sprite, Tank, flip, frames_for, render_sprite, school,
+)
+from matrix_common import fade_lut, mix, put, put_max, run_scene, scale
 
 # Background loop length in frames (20 s), seamless because every light term
 # completes a whole number of cycles in it
@@ -500,17 +502,19 @@ class Submarine(Event):
 
 
 class Jellyfish(Event):
-    """A few glowing jellyfish drift through on the current, pulsing to stay
-    up. The fish keep out of their way."""
+    """A few glowing jellyfish drift sideways through on the current, bells
+    pulsing and tentacles trailing behind. The fish keep out of their way."""
 
     layer = BACK
 
     class Jelly:
-        __slots__ = ("x", "y", "vy", "drift", "color", "rim", "period", "clock", "wave")
+        __slots__ = ("x", "y", "drift", "pixels", "pulse", "pulse_step", "bob")
 
     def __init__(self, tank: "Aquarium") -> None:
         super().__init__(tank)
         self.facing = random.choice((1, -1))
+        frames = JELLY_FRAMES if self.facing > 0 else [flip(f) for f in JELLY_FRAMES]
+        self.w, self.h = len(JELLY_FRAMES[0][0]), len(JELLY_FRAMES[0])
         colors = random.sample(JELLY_COLORS, 3)
         self.jellies = []
         # The first in drifts fastest, so none catches up with another
@@ -518,59 +522,42 @@ class Jellyfish(Event):
         for i, drift in enumerate(drifts):
             j = Jellyfish.Jelly()
             # Staggered in from the side they drift from
-            j.x = (-6 - i * random.uniform(14, 22)) if self.facing > 0 else tank.width + 6 + i * random.uniform(14, 22)
-            j.y = random.uniform(4, tank.floor - 14)
-            j.vy = 0.0
+            gap = i * random.uniform(16, 24)
+            j.x = (-self.w - gap) if self.facing > 0 else tank.width + gap
+            j.y = random.uniform(2, max(2, tank.floor - self.h - 3))
             j.drift = drift * self.facing
-            j.color = colors[i]
-            j.rim = mix(colors[i], (255, 255, 255), 0.45)
-            j.period = frames_for(random.uniform(2.2, 3.2))
-            j.clock = random.randrange(j.period)
-            j.wave = random.uniform(0, 2 * math.pi)
+            color = colors[i]
+            palette = {
+                "R": mix(color, (255, 255, 255), 0.45), "G": scale(color, 0.55),
+                "H": mix(color, (255, 255, 255), 0.7), "t": scale(color, 0.5),
+            }
+            j.pixels = [render_sprite(palette, f) for f in frames]
+            j.pulse = random.uniform(0, len(frames))
+            j.pulse_step = len(frames) / frames_for(random.uniform(2.2, 3.2))
+            j.bob = random.uniform(0, 2 * math.pi)
             self.jellies.append(j)
         self.frame_count = 0
 
-    def squeeze(self, j: "Jellyfish.Jelly") -> float:
-        """1 as the bell contracts for a pulse, easing back to 0."""
-        return max(0.0, 1 - j.clock / (j.period * 0.3))
+    def y(self, j: "Jellyfish.Jelly") -> float:
+        return j.y + 1.2 * math.sin(self.frame_count * FRAME_SECONDS * 0.4 + j.bob)
 
     def step(self) -> bool:
         self.frame_count += 1
-        low = self.tank.floor - 13
         for j in self.jellies:
-            j.clock += 1
-            if j.clock >= j.period:
-                j.clock = 0
-                # Pulse harder when sinking too low, gently near the surface
-                j.vy -= 0.08 if j.y < 4 else 0.17 if j.y > low else 0.12
-            j.vy = (j.vy + 0.0016) * 0.96
-            j.y += j.vy
+            j.pulse = (j.pulse + j.pulse_step) % len(j.pixels)
             j.x += j.drift
-        return any(-8 < j.x < self.tank.width + 8 or (j.x < 0) == (self.facing > 0) for j in self.jellies)
+        # Until the last is gone out the other side
+        return any(-self.w - 2 < j.x < self.tank.width + 2 or (j.x < 0) == (self.facing > 0) for j in self.jellies)
 
     def draw(self, fb: bytearray, t: float) -> None:
         width, height = self.tank.width, self.tank.height
         for j in self.jellies:
-            x0, y0 = round(j.x), round(j.y)
-            squeezed = self.squeeze(j) > 0.4
-            # The bell: a dome, narrower and taller while it pulses
-            rows = ((1, 1), (2, 2), (2, 2), (1, 1)) if squeezed else ((1, 1), (2, 2), (3, 3))
-            for dy, (a, b) in enumerate(rows):
-                for dx in range(-a, b + 1):
-                    color = j.rim if dy == 0 or (dy == len(rows) - 1 and dx % 2) else j.color
-                    put_max(fb, width, height, x0 + dx, y0 + dy, color)
-            # Tentacles trailing below, waving and fading
-            base = y0 + len(rows)
-            length = 4 if squeezed else 6
-            for k, tx in enumerate((-2, 0, 2) if not squeezed else (-1, 0, 1)):
-                for i in range(length):
-                    sway = math.sin(self.frame_count * 0.08 + j.wave + k * 1.7 - i * 0.6) * (i / length) * 1.2
-                    fade = 0.75 * (1 - i / (length + 1))
-                    put_max(fb, width, height, x0 + tx + round(sway), base + i,
-                            (int(j.color[0] * fade), int(j.color[1] * fade), int(j.color[2] * fade)))
+            x0, y0 = round(j.x), round(self.y(j))
+            for dx, dy, color in j.pixels[int(j.pulse)]:
+                put_max(fb, width, height, x0 + dx, y0 + dy, color)
 
     def obstacles(self) -> list[tuple[float, float, float, float]]:
-        return [(j.x - 4, j.y - 1, j.x + 4, j.y + 10) for j in self.jellies]
+        return [(j.x - 1, self.y(j) - 1, j.x + self.w + 1, self.y(j) + self.h + 1) for j in self.jellies]
 
 
 class Turtle(Event):

@@ -2,7 +2,8 @@
 """The deep sea at night: black water with marine snow drifting down, a
 hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
 and a few deep-sea creatures, seen mostly by their own light: an anglerfish
-with its glowing lure, lanternfish, a viperfish and a glowing jellyfish. They take turns: only one to three are in view at
+with its glowing lure, lanternfish, a viperfish and a glowing jellyfish, and
+now and then a vampire squid or a crab scuttling along the floor. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
@@ -26,7 +27,9 @@ import random
 
 import numpy as np
 
-from aquarium_common import AMONG, BACK, FRAME_SECONDS, Event, Fish, Sprite, Tank, flip, frames_for
+from aquarium_common import (
+    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, Event, Fish, Sprite, Tank, flip, frames_for,
+)
 from matrix_common import hsv, mix, put, put_max, run_scene, scale
 
 FRONT = "front"  # drawn over everything
@@ -179,66 +182,77 @@ CREATURES = {
         # sideways, tentacles trailing behind and below
         palette={},
         glows={"R": (150, 120, 255), "G": (60, 50, 160), "H": (230, 120, 230), "t": (45, 36, 110)},
+        frames=JELLY_FRAMES,
+    ),
+    "vampire-squid": dict(
+        # Deep red, flapping along on the fins on its mantle, its webbed cape
+        # of arms trailing, blue lights at the fins and arm tips. The last
+        # frame is the cape pulled up over itself into a spiky ball.
+        palette={"M": (140, 32, 48), "C": (95, 20, 36), "W": (65, 14, 26), "F": (160, 50, 66)},
+        glows={"E": (70, 150, 255), "g": (60, 140, 255)},
         frames=[
             [
-                "...RRR..",
-                "..RGGGR.",
-                ".RGGHGGR",
-                ".RRRRRRR",
-                ".t.t.t.t",
-                "t.t.t.t.",
-                ".t.t.t..",
-                "t.t.t...",
-                ".t.t....",
-                "t.t.....",
+                "g......FF...",
+                "WC....MMMM..",
+                "WCCC.MMMMMM.",
+                "WCCCCMMMEMMM",
+                "WCCC.MMMMMM.",
+                "WC....MMMM..",
+                "g......FF...",
             ],
             [
-                "...RRR..",
-                "..RGGGR.",
-                "..RGHGR.",
-                "..RGGGR.",
-                "..RRRRR.",
-                ".t.t.t..",
-                "t.t.t...",
-                ".t.t....",
-                "t.t.....",
-                ".t......",
+                "......FF....",
+                "gC....MMMM..",
+                "WCCC.MMMMMM.",
+                "WCCCCMMMEMMM",
+                "WCCC.MMMMMM.",
+                "gC....MMMM..",
+                "......FF....",
             ],
             [
-                "...RR...",
-                "..RGGR..",
-                "..RGHR..",
-                "..RGGR..",
-                "..RGGR..",
-                "..RRRR..",
-                ".t.t.t..",
-                "t.t.t...",
-                ".t.t....",
-                "t.t.....",
+                "....W..W....",
+                "...WCCCCW...",
+                "..WCCCCCCW..",
+                "...CCCCCC...",
+                "..WCCCCCCW..",
+                "...WCCCCW...",
+                "....W..W....",
+            ],
+        ],
+    ),
+    "crab": dict(
+        # A red deep-sea crab, claws up, eyes on stalks, scuttling sideways
+        palette={"B": (190, 70, 45), "D": (140, 45, 30), "C": (215, 95, 60), "E": ((20, 15, 15), (4, 3, 3)),
+                 "L": (160, 60, 40)},
+        frames=[
+            [
+                "C.......C",
+                "CC.E.E.CC",
+                ".CDBBBDC.",
+                "LBBBBBBBL",
+                "L.L...L.L",
             ],
             [
-                "...RRR..",
-                "..RGGGR.",
-                "..RGHGR.",
-                "..RGGGR.",
-                "..RRRRR.",
-                ".t.t.t..",
-                "t.t.t...",
-                ".t.t....",
-                "t.t.....",
-                ".t......",
+                "C.......C",
+                "CC.E.E.CC",
+                ".CDBBBDC.",
+                "LBBBBBBBL",
+                ".L.L.L.L.",
             ],
         ],
     ),
 }
 
 # (creature, how many, cruising speeds, how high it keeps from 0 the surface
-# to 1 the floor) swimming on their own
+# to 1 the floor, how likely it is to be the next to visit) swimming on their
+# own. The vampire squid and the crab only come by now and then.
 TANK = [
-    ("anglerfish", 1, (0.03, 0.06), (0.3, 1.0)),
-    ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8)),
-    ("viperfish", 1, (0.08, 0.14), (0.1, 0.8)),
-    ("jellyfish", 1, (0.04, 0.07), (0.0, 0.7)),
+    ("anglerfish", 1, (0.03, 0.06), (0.3, 1.0), 1.0),
+    ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8), 1.0),
+    ("viperfish", 1, (0.08, 0.14), (0.1, 0.8), 1.0),
+    ("jellyfish", 1, (0.04, 0.07), (0.0, 0.7), 1.0),
+    ("vampire-squid", 1, (0.05, 0.08), (0.15, 0.8), 0.25),
+    ("crab", 1, (0.05, 0.08), (1.0, 1.0), 0.25),
 ]
 
 # The creatures take turns: ON_SCREEN of them (a school counts each fish) are
@@ -402,9 +416,62 @@ class Critter(Fish):
         pulse = 1 - self.pulse * (0.5 + 0.5 * math.sin(t * 2.1 + self.pulse_phase))
         return self.glow * pulse * (1 + 1.5 * self.flash)
 
+    def frame(self) -> int:
+        """Which sprite frame to draw."""
+        return int(self.tail)
+
     def lamps(self, t: float) -> list[tuple[int, int]]:
         x, y = self.pose(t)
-        return [(x + dx, y + dy) for dx, dy in self.sprite.lamps[self.facing < 0][int(self.tail)]]
+        return [(x + dx, y + dy) for dx, dy in self.sprite.lamps[self.facing < 0][self.frame()]]
+
+
+class VampireSquid(Critter):
+    """A vampire squid flaps slowly along. Now and then, and whenever it's
+    startled, it pulls its cape up over itself into a spiky ball and hangs
+    there a while before swimming on."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.beats = 2  # swimming; the last frame is the cloak
+        self.cloak = 0  # frames left cloaked
+
+    def swim(self) -> None:
+        if not self.cloak and not self.fleeing and (self.flash > 0.8 or random.random() < 1 / frames_for(25)):
+            self.cloak = frames_for(random.uniform(3, 6))
+        if self.cloak:
+            # Drifting to a stop
+            self.cloak -= 1
+            self.speed *= 0.95
+            self.vy *= 0.9
+            self.x += self.speed * self.facing
+            self.y += self.vy
+            self.glow += (self.glow_to - self.glow) * 0.04
+            self.flash *= 0.94
+            return
+        super().swim()
+
+    def frame(self) -> int:
+        return 2 if self.cloak else int(self.tail)
+
+
+class Crab(Critter):
+    """A crab scuttling sideways along the floor, its legs moving only while
+    it walks, stopping now and then."""
+
+    ground: list[int]  # the floor's top row in each column, set by the tank
+
+    def swim(self) -> None:
+        tail = self.tail
+        super().swim()
+        self.tail = (tail + self.speed * 1.2) % self.beats
+        # Standing on the floor beneath it
+        width = len(self.ground)
+        cols = [min(max(c, 0), width - 1) for c in range(int(self.x), int(self.x) + self.w)]
+        self.y = self.target_y = min(self.ground[c] for c in cols) - self.h
+        self.vy = 0.0
+
+    def pose(self, t: float) -> tuple[int, int]:
+        return round(self.x), round(self.y)
 
 
 class Flake:
@@ -934,15 +1001,20 @@ class NightTank(Tank):
             self.worms.append(w)
 
         # The creatures, each at its own depth, drawn far to near
-        kinds = [(kind, cruise, band) for kind, n, cruise, band in TANK for _ in range(n)]
+        kinds = [(kind, cruise, band, odds) for kind, n, cruise, band, odds in TANK for _ in range(n)]
         depths = [i / (len(kinds) - 1) for i in range(len(kinds))]
         random.shuffle(depths)
         self.fish = []
-        for (kind, cruise, band), depth in zip(kinds, depths):
+        self.odds = {}  # how likely each is to be the next to visit
+        for (kind, cruise, band, odds), depth in zip(kinds, depths):
             top = 1 + round(band[0] * (floor - 2))
             bottom = 1 + round(band[1] * (floor - 2))
-
-            self.fish.append(Critter(kind, width, top, bottom, depth, cruise))
+            critter = {"vampire-squid": VampireSquid, "crab": Crab}.get(kind, Critter)(
+                kind, width, top, bottom, depth, cruise)
+            if isinstance(critter, Crab):
+                critter.ground = self.floor_top
+            self.odds[id(critter)] = odds
+            self.fish.append(critter)
         self.fish.sort(key=lambda fish: -fish.depth)
 
         # A few start in view, the rest waiting their turns
@@ -953,7 +1025,7 @@ class NightTank(Tank):
         self.last_gone = None
         room = self.crowd
         for f in random.sample(self.units(), len(self.size)):
-            if self.size[id(f)] <= room:
+            if self.size[id(f)] <= room and self.odds[id(f)] >= 1:
                 room -= self.size[id(f)]
                 f.visit = frames_for(random.uniform(*VISIT_SECONDS) * random.uniform(0.3, 1))
             else:
@@ -1008,7 +1080,7 @@ class NightTank(Tank):
             if len(waiting) > 1 and self.last_gone in waiting:
                 waiting.remove(self.last_gone)
             if waiting:
-                self.arrive(random.choice(waiting))
+                self.arrive(random.choices(waiting, [self.odds[id(u)] for u in waiting])[0])
                 self.entry_wait = frames_for(random.uniform(*ENTRY_SECONDS))
 
     def leave(self, fish: Critter) -> None:
@@ -1227,7 +1299,7 @@ class NightTank(Tank):
                 among = None
             x, y = fish.pose(t)
             level = fish.level(t)
-            fish.sprite.draw(fb, width, height, x, y, fish.facing, int(fish.tail), light_rows, level)
+            fish.sprite.draw(fb, width, height, x, y, fish.facing, fish.frame(), light_rows, level)
             if fish.sprite.lamps[0][0] and level > 0.05:
                 # A soft glow diffusing out around a lure
                 color = CREATURES[fish.kind]["halo"]
