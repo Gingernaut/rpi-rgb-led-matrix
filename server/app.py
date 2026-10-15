@@ -23,6 +23,7 @@ ANIMATIONS = {
     "aquarium-night": "aquarium_night.py",
     "iss": "iss.py",
     "flights": "flights.py",
+    "tides": "tides.py",
     "koi-pond": "koi_pond.py",
     "tide-pool": "tide_pool.py",
 }
