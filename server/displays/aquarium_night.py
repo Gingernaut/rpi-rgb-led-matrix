@@ -3,7 +3,8 @@
 hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
 and a few deep-sea creatures, seen mostly by their own light: an anglerfish
 with its glowing lure, lanternfish, a viperfish, a glowing jellyfish and a
-crab scuttling along the floor, and now and then a vampire squid. They take turns: only one to three are in view at
+spider crab picking its way along the floor, and now and then a vampire
+squid. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
@@ -220,24 +221,27 @@ CREATURES = {
             ],
         ],
     ),
-    "crab": dict(
-        # A red deep-sea crab, claws up, eyes on stalks, scuttling sideways
-        palette={"B": (190, 70, 45), "D": (140, 45, 30), "C": (215, 95, 60), "E": ((20, 15, 15), (4, 3, 3)),
-                 "L": (160, 60, 40)},
+    "spider-crab": dict(
+        # A Japanese spider crab: a small spotted orange body slung between
+        # very long spindly legs, knees high, picking its way sideways
+        palette={"B": (215, 95, 45), "S": (245, 195, 145), "L": (195, 85, 42), "K": (225, 110, 55),
+                 "E": ((20, 15, 15), (4, 3, 3))},
         frames=[
             [
-                "C.......C",
-                "CC.E.E.CC",
-                ".CDBBBDC.",
-                "LBBBBBBBL",
-                "L.L...L.L",
+                "...KK.......KK...",
+                "..L..L.E.E.L..L..",
+                ".L...LBSBBBL...L.",
+                ".L..L.BBBSB.L..L.",
+                "L...L..BBB..L...L",
+                "L..L.........L..L",
             ],
             [
-                "C.......C",
-                "CC.E.E.CC",
-                ".CDBBBDC.",
-                "LBBBBBBBL",
-                ".L.L.L.L.",
+                "....KK.....KK....",
+                "...L..LE.EL..L...",
+                "..L..LBSBBBL..L..",
+                ".L..L.BBBSB.L..L.",
+                ".L..L..BBB..L..L.",
+                "L...L.......L...L",
             ],
         ],
     ),
@@ -252,7 +256,7 @@ TANK = [
     ("viperfish", 1, (0.08, 0.14), (0.1, 0.8), 1.0),
     ("jellyfish", 1, (0.04, 0.07), (0.0, 0.7), 1.0),
     ("vampire-squid", 1, (0.05, 0.08), (0.15, 0.8), 0.25),
-    ("crab", 1, (0.05, 0.08), (1.0, 1.0), 1.0),
+    ("spider-crab", 1, (0.05, 0.08), (1.0, 1.0), 1.0),
 ]
 
 # The creatures take turns: ON_SCREEN of them (a school counts each fish) are
@@ -455,7 +459,7 @@ class VampireSquid(Critter):
 
 
 class Crab(Critter):
-    """A crab scuttling sideways along the floor, its legs moving only while
+    """A crab walking sideways along the floor, its legs moving only while
     it walks, stopping now and then."""
 
     ground: list[int]  # the floor's top row in each column, set by the tank
@@ -1009,7 +1013,7 @@ class NightTank(Tank):
         for (kind, cruise, band, odds), depth in zip(kinds, depths):
             top = 1 + round(band[0] * (floor - 2))
             bottom = 1 + round(band[1] * (floor - 2))
-            critter = {"vampire-squid": VampireSquid, "crab": Crab}.get(kind, Critter)(
+            critter = {"vampire-squid": VampireSquid, "spider-crab": Crab}.get(kind, Critter)(
                 kind, width, top, bottom, depth, cruise)
             if isinstance(critter, Crab):
                 critter.ground = self.floor_top

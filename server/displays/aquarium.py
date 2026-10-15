@@ -10,7 +10,8 @@ seaweed stands in front of them, and the neon tetras swim as a school.
 Every minute or so something happens (see EVENTS): a shark cruises through
 and the fish scatter, a whale or an old submarine passes in the distance,
 jellyfish drift by, a sea turtle paddles across, or, now and then, a moray
-eel slides along the bottom. To try one out,
+eel slides along the bottom or a crab scuttles across the sand. To try one
+out,
 AQUARIUM_EVENT shows just that one, a couple of seconds in and then every
 few seconds after (see aquarium_common):
 
@@ -172,6 +173,29 @@ MORAY_BELLY = (165, 195, 95)
 MORAY_FIN = (150, 175, 70)  # the fin along its back
 MORAY_SPEED = 0.18
 MORAY_PAUSE = (4.0, 7.0)  # seconds it stops partway, gaping
+
+# An orange crab, claws up and eyes on stalks; frames step its legs
+CRAB_PALETTE = {
+    "B": (245, 100, 30), "D": (190, 65, 20), "C": (255, 135, 50), "E": (15, 10, 10), "L": (220, 85, 28),
+}
+CRAB = [
+    [
+        "C.......C",
+        "CC.E.E.CC",
+        ".CDBBBDC.",
+        "LBBBBBBBL",
+        "L.L...L.L",
+    ],
+    [
+        "C.......C",
+        "CC.E.E.CC",
+        ".CDBBBDC.",
+        "LBBBBBBBL",
+        ".L.L.L.L.",
+    ],
+]
+CRAB_SPEED = 0.15
+CRAB_STOPS = (1, 3)  # how many times it stops on the way across
 
 # The whale is drawn from a profile rather than a sprite, for a smooth round
 # body: its half-height at each point from the nose (0) to the fluke tips (1).
@@ -695,6 +719,45 @@ class Moray(Event):
         put(fb, width, height, ex - self.facing, hy + MORAY_EYE[1], mix(MORAY_PALETTE["E"], HAZE, self.depth * 0.22))
 
 
+class Crab(Event):
+    """Now and then a crab scuttles sideways across the sand in front of
+    everything, stopping a few times on the way, claws up."""
+
+    depth = 0.05
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.sprite = Sprite(CRAB_PALETTE, CRAB, self.depth, HAZE)
+        self.facing = random.choice((1, -1))
+        self.x = -self.sprite.w - 1.0 if self.facing > 0 else tank.width + 1.0
+        # Where it stops, in the order it reaches them
+        stops = sorted(random.uniform(0.15, 0.85) * tank.width for _ in range(random.randint(*CRAB_STOPS)))
+        self.stops = stops if self.facing > 0 else stops[::-1]
+        self.rest = 0
+        self.speed = CRAB_SPEED
+        self.step_phase = 0.0
+
+    def step(self) -> bool:
+        if self.rest:
+            self.rest -= 1
+        elif self.stops and (self.x + self.sprite.w / 2 - self.stops[0]) * self.facing >= 0:
+            self.stops.pop(0)
+            self.rest = frames_for(random.uniform(1.0, 3.0))
+        else:
+            self.x += self.speed * self.facing
+            # Its legs step only while it walks
+            self.step_phase = (self.step_phase + 0.12) % 2
+        return -self.sprite.w - 2 < self.x < self.tank.width + 2
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        tank = self.tank
+        x = round(self.x)
+        cols = [tank.sand_top[c] for c in range(max(x, 0), min(x + self.sprite.w, tank.width))]
+        # Standing on the sand beneath it
+        y = (min(cols) if cols else tank.floor) - self.sprite.h + 1
+        self.sprite.draw(fb, tank.width, tank.height, x, y, self.facing, int(self.step_phase))
+
+
 # name: (event, weight when picking one at random)
 EVENTS = {
     "shark": (Shark, 3),
@@ -703,6 +766,7 @@ EVENTS = {
     "jellyfish": (Jellyfish, 2),
     "turtle": (Turtle, 2),
     "moray": (Moray, 1),  # only now and then
+    "crab": (Crab, 1),  # only now and then
 }
 
 
