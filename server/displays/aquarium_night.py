@@ -97,36 +97,42 @@ SPARK = (40, 210, 170)
 #
 # Each creature is drawn from sprite rows (facing right; "." transparent) with
 # a palette of lit colors (or (lit, unlit) pairs; unlit defaults to the
-# creature's dim, or DIM, of lit), and glows: characters that shine whatever the light. A glow marked as
-# a lamp also lights its surroundings, like the anglerfish's lure.
+# creature's dim, or DIM, of lit), and glows: characters that shine whatever
+# the light. A glow marked as a lamp also lights its surroundings, like the
+# anglerfish's lure, and glows its halo color around it.
 
 CREATURES = {
     "anglerfish": dict(
-        palette={"B": (120, 88, 72), "D": (88, 64, 54), "W": ((240, 235, 215), (40, 38, 34)),
-                 "M": ((90, 20, 24), (18, 4, 5)), "K": ((15, 12, 14), (3, 2, 3)), "S": (125, 100, 78),
-                 "F": (100, 74, 62)},
-        glows={"L": (120, 255, 200)},
+        # Blue-grey, rimmed paler, all gaping jaw and needle teeth, with a
+        # spiny dorsal fin, a fan tail and a lure arching out over its mouth
+        palette={"B": (62, 82, 118), "D": (40, 54, 84), "H": (110, 145, 190), "F": (78, 100, 138),
+                 "W": ((225, 235, 245), (45, 48, 55)), "M": ((14, 14, 30), (3, 3, 6)),
+                 "E": ((200, 230, 250), (50, 60, 75)), "S": (120, 140, 170)},
+        glows={"L": (210, 245, 255)},
+        halo=(60, 160, 255),
         lamps="L",
         frames=[
             [
-                ".....SSS...",
-                "....S...S..",
-                "..DDS....S.",
-                ".DBBBBK...L",
-                "TBBBBBBBW..",
-                "TTBBBBBMMW.",
-                "TBBBBBBBWBW",
-                "..BBBBBBB..",
+                "....F..SS...",
+                "...FF.S..S..",
+                "F.DDDDS...L.",
+                "FFDBBBBEBW..",
+                "FFBBBBBBMWMW",
+                "FFBBBBBBMMM.",
+                "F.BBBBBBWMWM",
+                "..HBBBBBBBBW",
+                "...HHHHHH...",
             ],
             [
-                ".....SSS...",
-                "....S...S..",
-                "T.DDS....S.",
-                "TDBBBBK...L",
-                ".BBBBBBBW..",
-                ".TBBBBBMMW.",
-                "TBBBBBBBWBW",
-                "T.BBBBBBB..",
+                "....F..SS...",
+                "F..FF.S..S..",
+                "FFDDDDS...L.",
+                "FFDBBBBEBW..",
+                ".FBBBBBBMWMW",
+                ".FBBBBBBMMM.",
+                "FFBBBBBBWMWM",
+                "F.HBBBBBBBBW",
+                "...HHHHHH...",
             ],
         ],
     ),
@@ -1186,7 +1192,7 @@ class NightTank(Tank):
             fish.sprite.draw(fb, width, height, x, y, fish.facing, int(fish.tail), light_rows, level)
             if fish.sprite.lamps[0][0] and level > 0.05:
                 # A soft glow diffusing out around a lure
-                color = CREATURES[fish.kind]["glows"]["L"]
+                color = CREATURES[fish.kind]["halo"]
                 for lx, ly in fish.lamps(t):
                     for hx, hy, strength in LURE_HALO:
                         put_max(fb, width, height, lx + hx, ly + hy, scale(color, strength * min(level, 1.0)))
