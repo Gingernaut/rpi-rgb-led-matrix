@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """The deep sea at night: black water with marine snow drifting down, a
 hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
-and a few deep-sea creatures, seen mostly by their
-own light: an anglerfish with its glowing lure, a pair of silver hatchetfish,
-lanternfish and a viperfish. They take turns: only one to three are in view at
+and a few deep-sea creatures, seen mostly by their own light: an anglerfish
+with its glowing lure, lanternfish and a viperfish. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
@@ -27,7 +26,7 @@ import random
 
 import numpy as np
 
-from aquarium_common import AMONG, BACK, FRAME_SECONDS, Event, Fish, Sprite, Tank, flip, frames_for, school
+from aquarium_common import AMONG, BACK, FRAME_SECONDS, Event, Fish, Sprite, Tank, flip, frames_for
 from matrix_common import hsv, mix, put, put_max, run_scene, scale
 
 FRONT = "front"  # drawn over everything
@@ -136,32 +135,6 @@ CREATURES = {
             ],
         ],
     ),
-    "hatchetfish": dict(
-        palette={"S": (185, 195, 210), "D": (120, 130, 150), "E": ((30, 30, 40), (8, 8, 10)),
-                 "T": (150, 160, 175)},
-        glows={"G": (40, 120, 255)},
-        dim=0.15,  # silver, but it's dark down here
-        frames=[
-            [
-                "...DDDD.",
-                "T.DSSSSE",
-                "TTSSSSSS",
-                "T.GSSSSS",
-                "...GSSSS",
-                "....GSSS",
-                ".....GGG",
-            ],
-            [
-                "T..DDDD.",
-                "TTDSSSSE",
-                "T.SSSSSS",
-                "..GSSSSS",
-                "...GSSSS",
-                "....GSSS",
-                ".....GGG",
-            ],
-        ],
-    ),
     "lanternfish": dict(
         palette={"B": (95, 110, 140), "D": (60, 72, 100), "E": ((200, 220, 230), (40, 45, 50)),
                  "T": (80, 95, 125)},
@@ -203,9 +176,6 @@ TANK = [
     ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8)),
     ("viperfish", 1, (0.08, 0.14), (0.1, 0.8)),
 ]
-# The hatchetfish keep together, the second in its place relative to the
-# leader
-SCHOOL = ("hatchetfish", (0.1, 0.16), (0.0, 0.75), [(-8, 3)])
 
 # The creatures take turns: ON_SCREEN of them (a school counts each fish) are
 # in view at once, the number changing every CROWD_SECONDS. Each stays for
@@ -895,7 +865,7 @@ class NightTank(Tank):
             self.worms.append(w)
 
         # The creatures, each at its own depth, drawn far to near
-        kinds = [(kind, cruise, band) for kind, n, cruise, band in TANK for _ in range(n)] + [SCHOOL[:3]]
+        kinds = [(kind, cruise, band) for kind, n, cruise, band in TANK for _ in range(n)]
         depths = [i / (len(kinds) - 1) for i in range(len(kinds))]
         random.shuffle(depths)
         self.fish = []
@@ -903,10 +873,7 @@ class NightTank(Tank):
             top = 1 + round(band[0] * (floor - 2))
             bottom = 1 + round(band[1] * (floor - 2))
 
-            def make(leader=None, place=(0, 0), kind=kind, cruise=cruise, top=top, bottom=bottom, depth=depth):
-                return Critter(kind, width, top, bottom, depth, cruise, leader, place)
-
-            self.fish += school(make, SCHOOL[3]) if kind == SCHOOL[0] else [make()]
+            self.fish.append(Critter(kind, width, top, bottom, depth, cruise))
         self.fish.sort(key=lambda fish: -fish.depth)
 
         # A few start in view, the rest waiting their turns
