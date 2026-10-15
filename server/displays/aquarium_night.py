@@ -94,6 +94,8 @@ LURE_HALO = [
     if 0 < dx * dx + dy * dy <= 10
 ]
 
+VAMPIRE_CLOUD = (50, 130, 255)  # the glowing specks a startled vampire squid puffs out
+
 SNOW_FLAKES = 28
 SPARK = (40, 210, 170)
 
@@ -187,38 +189,43 @@ CREATURES = {
         frames=JELLY_FRAMES,
     ),
     "vampire-squid": dict(
-        # Deep red, flapping along on the fins on its mantle, its webbed cape
-        # of arms trailing, blue lights at the fins and arm tips. The last
-        # frame is the cape pulled up over itself into a spiky ball.
-        palette={"M": (140, 32, 48), "C": (95, 20, 36), "W": (65, 14, 26), "F": (160, 50, 66)},
-        glows={"E": (70, 150, 255), "g": (60, 140, 255)},
+        # Mantle first, flapping the two ear-like fins near its tip, a big
+        # blue eye, and behind it a dark cape of webbed arms fringed with
+        # pale spines, blue lights at the arm tips and fin bases. The last
+        # frame is the cape pulled up over itself, spines out.
+        palette={"M": (150, 35, 50), "N": (110, 24, 38), "C": (80, 16, 30), "W": (125, 30, 45),
+                 "c": (205, 160, 165), "F": (175, 60, 75)},
+        glows={"E": (90, 170, 255), "g": (60, 140, 255), "b": (40, 90, 200)},
         frames=[
             [
-                "g......FF...",
-                "WC....MMMM..",
-                "WCCC.MMMMMM.",
-                "WCCCCMMMEMMM",
-                "WCCC.MMMMMM.",
-                "WC....MMMM..",
-                "g......FF...",
+                "........FF...",
+                "g......FNNN..",
+                "cWc...bMMMMM.",
+                "WCCCWMMMMMMMM",
+                "WCCCCEMMMMMMM",
+                "cWc...bMMMMM.",
+                "g......FNNN..",
+                "........FF...",
             ],
             [
-                "......FF....",
-                "gC....MMMM..",
-                "WCCC.MMMMMM.",
-                "WCCCCMMMEMMM",
-                "WCCC.MMMMMM.",
-                "gC....MMMM..",
-                "......FF....",
+                ".............",
+                "........NNN..",
+                "gWc...bMMMMMF",
+                "cCCCWMMMMMMMF",
+                "cCCCCEMMMMMMF",
+                "gWc...bMMMMMF",
+                "........NNN..",
+                ".............",
             ],
             [
-                "....W..W....",
-                "...WCCCCW...",
-                "..WCCCCCCW..",
-                "...CCCCCC...",
-                "..WCCCCCCW..",
-                "...WCCCCW...",
-                "....W..W....",
+                "....c.c.c....",
+                "...cWCCCWc...",
+                "..cWCCCCCWc..",
+                "..cCCCCCCCc..",
+                "..cWCCCCCWc..",
+                "...cWCCCWc...",
+                "....c.c.c....",
+                ".............",
             ],
         ],
     ),
@@ -411,24 +418,45 @@ class Critter(Fish):
         """Which sprite frame to draw."""
         return int(self.tail)
 
+    def draw_extra(self, fb: bytearray, width: int, height: int) -> None:
+        """Anything it draws besides its sprite."""
+
     def lamps(self, t: float) -> list[tuple[int, int]]:
         x, y = self.pose(t)
         return [(x + dx, y + dy) for dx, dy in self.sprite.lamps[self.facing < 0][self.frame()]]
 
 
 class VampireSquid(Critter):
-    """A vampire squid flaps slowly along. Now and then, and whenever it's
-    startled, it pulls its cape up over itself into a spiky ball and hangs
-    there a while before swimming on."""
+    """A vampire squid flaps slowly along. Now and then, and whenever the
+    giant squid comes by, it pulls its cape up over itself into a spiky ball
+    and hangs there a while before swimming on. Startled, it first puffs out
+    a cloud of glowing blue specks to slip away behind."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.beats = 2  # swimming; the last frame is the cloak
         self.cloak = 0  # frames left cloaked
+        self.hid = False  # already cloaked for the dimming the giant squid brings
+        self.cloud: list[Spark] = []
 
     def swim(self) -> None:
-        if not self.cloak and not self.fleeing and (self.flash > 0.8 or random.random() < 1 / frames_for(25)):
+        startled = self.flash > 0.8
+        dimmed = self.glow_to < 0.5
+        if not dimmed:
+            self.hid = False
+        if not self.cloak and not self.fleeing and (
+                startled or (dimmed and not self.hid) or random.random() < 1 / frames_for(25)):
             self.cloak = frames_for(random.uniform(3, 6))
+            self.hid = dimmed
+            if startled:
+                self.puff()
+        for s in self.cloud:
+            s.age += 1
+            s.x += s.vx
+            s.y += s.vy
+            s.vx *= 0.96
+            s.vy = s.vy * 0.96 - 0.002
+        self.cloud = [s for s in self.cloud if s.age < s.life]
         if self.cloak:
             # Drifting to a stop
             self.cloak -= 1
@@ -441,8 +469,28 @@ class VampireSquid(Critter):
             return
         super().swim()
 
+    def puff(self) -> None:
+        """A cloud of glowing specks from its arm tips."""
+        cx = self.x + (2 if self.facing > 0 else self.w - 3)
+        cy = self.y + self.h / 2
+        for _ in range(30):
+            s = Spark()
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(0.06, 0.3)
+            s.x, s.y = cx, cy
+            s.vx, s.vy = math.cos(angle) * speed - 0.08 * self.facing, math.sin(angle) * speed * 0.7
+            s.age, s.life = 0, frames_for(random.uniform(2.0, 4.5))
+            s.color = mix(VAMPIRE_CLOUD, (200, 240, 255), random.random() * 0.4)
+            self.cloud.append(s)
+
     def frame(self) -> int:
         return 2 if self.cloak else int(self.tail)
+
+    def draw_extra(self, fb: bytearray, width: int, height: int) -> None:
+        for s in self.cloud:
+            fade = 1 - s.age / s.life
+            if random.random() < 0.85:  # twinkling
+                put_max(fb, width, height, round(s.x), round(s.y), scale(s.color, fade * min(self.glow, 1.0)))
 
 
 class Crab(Critter):
@@ -474,7 +522,7 @@ class Puff:
 
 
 class Spark:
-    __slots__ = ("x", "y", "age", "life", "color")
+    __slots__ = ("x", "y", "vx", "vy", "age", "life", "color")
 
 
 class Worm:
@@ -1092,8 +1140,12 @@ class NightTank(Tank):
         fish.vy = 0.0
         fish.speed = fish.cruise
         fish.pick_turn()
-        # Its lights as they should be now (they didn't change while it was away)
+        # Its lights as they should be now (they didn't change while it was
+        # away), and nothing left over from its last visit
         fish.glow, fish.flash = fish.glow_to, 0.0
+        if isinstance(fish, VampireSquid):
+            fish.cloud.clear()
+            fish.cloak = 0
         for f in self.fish:
             if f.leader is fish:
                 f.x, f.facing, f.speed, f.vy = fish.x + f.place[0], fish.facing, fish.cruise, 0.0
@@ -1288,6 +1340,7 @@ class NightTank(Tank):
             x, y = fish.pose(t)
             level = fish.level(t)
             fish.sprite.draw(fb, width, height, x, y, fish.facing, fish.frame(), light_rows, level)
+            fish.draw_extra(fb, width, height)
             if fish.sprite.lamps[0][0] and level > 0.05:
                 # A soft glow diffusing out around a lure
                 color = CREATURES[fish.kind]["halo"]
