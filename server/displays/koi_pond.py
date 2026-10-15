@@ -64,9 +64,11 @@ ASAGI_BLUE = (92, 120, 152)
 ASAGI_RED = (232, 104, 44)
 BRONZE = (150, 102, 58)
 
-# Ripples spread at RIPPLE_SPEED pixels a frame for RIPPLE_FRAMES
+# Ripples spread at RIPPLE_SPEED pixels a frame for up to RIPPLE_FRAMES
+# (raindrops' fade sooner)
 RIPPLE_SPEED = 0.22
 RIPPLE_FRAMES = 46
+RAINDROP_FRAMES = 26
 
 # Shadows fall down and to the right of whatever casts them
 SHADOW_DX, SHADOW_DY = 0.8, 1.0
@@ -87,6 +89,8 @@ def wrap(angle: float) -> float:
 
 
 YY, XX = (a.astype(np.float32) for a in np.mgrid[0:HEIGHT, 0:WIDTH])
+WATER_RGB = np.array(WATER, np.float32)
+SHIMMER = np.array((255, 255, 240), np.float32)
 
 
 # --- Drawing -----------------------------------------------------------------
@@ -106,6 +110,7 @@ class Discs:
         self.r: list[float] = []
         self.w: list[float] = []
         self.c: list[tuple] = []
+        self.batches: list[tuple] = []  # (x, y, r, w, colors) arrays from add_many
 
     def add(self, x: float, y: float, r: float, weight: float = 1.0, color=(0, 0, 0)) -> None:
         self.x.append(x)
@@ -114,35 +119,85 @@ class Discs:
         self.w.append(weight)
         self.c.append(color)
 
-    def raster(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(pixel index, coverage, which disc) for every pixel a disc touches."""
-        x = np.array(self.x, np.float32)[:, None]
-        y = np.array(self.y, np.float32)[:, None]
+    def add_many(self, x: np.ndarray, y: np.ndarray, r: np.ndarray, weight, colors: np.ndarray) -> None:
+        """Many discs at once, as arrays (weight may be one number)."""
+        n = len(x)
+        self.batches.append((x, y, r, np.broadcast_to(np.float32(weight), (n,)) if np.ndim(weight) == 0 else weight,
+                             colors))
+
+    def arrays(self) -> tuple:
+        parts = list(self.batches)
+        if self.x:
+            parts.append((np.array(self.x, np.float32), np.array(self.y, np.float32), np.array(self.r, np.float32),
+                          np.array(self.w, np.float32), np.array(self.c, np.float32)))
+        if len(parts) == 1:
+            return parts[0]
+        return tuple(np.concatenate([p[k] for p in parts]) for k in range(5))
+
+    def __bool__(self) -> bool:
+        return bool(self.x or self.batches)
+
+    def raster(self) -> tuple:
+        """(row, column, coverage, which disc) for every pixel a disc touches,
+        and the discs' colors."""
+        x, y, r, w, colors = self.arrays()
+        x = np.asarray(x, np.float32)[:, None]
+        y = np.asarray(y, np.float32)[:, None]
         xi = np.floor(x).astype(np.int32) + DISC_DX
         yi = np.floor(y).astype(np.int32) + DISC_DY
         d = np.sqrt((xi - x) ** 2 + (yi - y) ** 2)
-        cover = np.clip(np.array(self.r, np.float32)[:, None] + 0.5 - d, 0, 1) * np.array(self.w, np.float32)[:, None]
+        cover = np.clip(np.asarray(r, np.float32)[:, None] + 0.5 - d, 0, 1) * np.asarray(w, np.float32)[:, None]
         ok = (xi >= 0) & (xi < WIDTH) & (yi >= 0) & (yi < HEIGHT) & (cover > 0.004)
-        return (yi * WIDTH + xi)[ok], cover[ok], np.nonzero(ok)[0]
+        return yi[ok], xi[ok], cover[ok], np.nonzero(ok)[0], colors
 
-    def paint(self, flat: np.ndarray) -> None:
-        """Paint the blobs over a flat (pixels, 3) frame."""
-        if not self.x:
+    def paint(self, frame: np.ndarray) -> None:
+        """Paint the blobs over a (height, width, 3) frame."""
+        if not self:
             return
-        index, cover, which = self.raster()
-        alpha = np.zeros(PIXELS, np.float32)
-        np.maximum.at(alpha, index, cover)
-        total = np.maximum(np.bincount(index, cover, PIXELS), 1e-6)
-        colors = np.array(self.c, np.float32)[which]
-        blend = np.stack([np.bincount(index, cover * colors[:, k], PIXELS) for k in range(3)], axis=1)
-        flat += (blend / total[:, None] - flat) * alpha[:, None]
+        yi, xi, cover, which, colors = self.raster()
+        if not len(cover):
+            return
+        # Work in the box the blobs cover
+        x0, x1, y0, y1 = xi.min(), xi.max() + 1, yi.min(), yi.max() + 1
+        w, h = x1 - x0, y1 - y0
+        local = (yi - y0) * w + (xi - x0)
+        alpha = np.zeros(w * h, np.float32)
+        np.maximum.at(alpha, local, cover)
+        total = np.maximum(np.bincount(local, cover, w * h), 1e-6)
+        rgb = np.bincount((local[:, None] * 3 + RGB_INDEX).ravel(),
+                          (cover[:, None] * np.asarray(colors, np.float32)[which]).ravel(), w * h * 3)
+        blend = rgb.reshape(h, w, 3) / total.reshape(h, w, 1)
+        region = frame[y0:y1, x0:x1]
+        region += (blend - region) * alpha.reshape(h, w, 1)
 
     def shade(self) -> np.ndarray:
-        """The blobs' summed weights per pixel, for a shadow."""
-        if not self.x:
-            return np.zeros(PIXELS, np.float32)
-        index, cover, _ = self.raster()
-        return np.bincount(index, cover, PIXELS).astype(np.float32)
+        """The blobs' summed weights per pixel (height, width), for a shadow."""
+        if not self:
+            return np.zeros((HEIGHT, WIDTH), np.float32)
+        yi, xi, cover, _, _ = self.raster()
+        return np.bincount(yi * WIDTH + xi, cover, PIXELS).astype(np.float32).reshape(HEIGHT, WIDTH)
+
+
+RGB_INDEX = np.arange(3)
+
+
+def make_rings() -> list[tuple[np.ndarray, np.ndarray]]:
+    """A ripple's ring at each age, centered in a square: how much it
+    brightens (crest) or darkens (trough) the water as a multiplier, and the
+    light it adds, each at full strength."""
+    rings = []
+    for age in range(RIPPLE_FRAMES):
+        r = age * RIPPLE_SPEED
+        reach = math.ceil(r + 2.5)
+        yy, xx = np.mgrid[-reach:reach + 1, -reach:reach + 1].astype(np.float32)
+        d = np.hypot(xx, yy)
+        crest = np.exp(-((d - r) / 0.65) ** 2)
+        trough = np.exp(-((d - r + 1.2) / 0.65) ** 2)
+        rings.append(((0.55 * crest - 0.3 * trough)[..., None], (crest * 26)[..., None]))
+    return rings
+
+
+RINGS = make_rings()
 
 
 # --- Koi ---------------------------------------------------------------------
@@ -208,6 +263,13 @@ class Koi:
         self.colors, self.fin_color, self.shimmer = pattern(variety, self.n)
         girth = self.length * random.uniform(0.14, 0.16)
         self.radii = [girth * self.profile(i / (self.n - 1)) for i in range(self.n)]
+        # The same as arrays, for drawing
+        self.u = np.linspace(0, 1, self.n, dtype=np.float32)
+        self.index = np.arange(self.n, dtype=np.float32)
+        self.sweep_shape = self.u ** 1.6
+        self.radius_array = np.array(self.radii, np.float32)
+        self.color_array = np.array(self.colors, np.float32)
+        self.fin_at = max(1, round(0.24 * (self.n - 1)))
         self.heading = random.uniform(0, TAU)
         self.x, self.y = random.uniform(*VIEW[::2]), random.uniform(*VIEW[1::2])
         self.points = [(self.x - i * math.cos(self.heading), self.y - i * math.sin(self.heading))
@@ -304,44 +366,43 @@ class Koi:
 
     def draw(self, t: float, shadow: Discs) -> Discs:
         """The koi as discs, and its shadow (added to shadow)."""
-        body = Discs()
         z = self.z
         fade = 0.12 + 0.5 * z
         alpha = 1.0 - 0.25 * z
-        # The tail sweeps more the faster it swims, most at the tip
+        p = np.array(self.points, np.float32)
+        # Each point's direction toward the head, and across the body
+        ahead = np.empty_like(p)
+        ahead[1:] = p[:-1] - p[1:]
+        ahead[0] = (math.cos(self.heading), math.sin(self.heading))
+        ahead /= np.maximum(np.hypot(ahead[:, 0], ahead[:, 1]), 1e-6)[:, None]
+        across = np.stack([-ahead[:, 1], ahead[:, 0]], axis=1)
+        # The tail sweeps side to side, more the faster it swims, most at the tip
         sweep = 0.3 + min(self.speed, 0.4) * 2.2
-        points = self.points
-        n = self.n
+        side = sweep * self.sweep_shape * np.sin(self.phase - self.u * 3.2)
+        spine = p + across * side[:, None]
+        colors = self.color_array
+        if self.shimmer:
+            glint = 0.25 * np.maximum(0.0, np.sin(t * 1.6 - self.index * 0.7))[:, None]
+            colors = colors + (SHIMMER - colors) * glint
+        body = Discs()
+        body.add_many(spine[:, 0], spine[:, 1], self.radius_array, alpha, colors + (WATER_RGB - colors) * fade)
         # Nearer the bottom, the shadow is closer and darker
         offset = 0.6 + (1 - z) * 2.0
-        shade = 0.2 + 0.12 * z
-        for i, (px, py) in enumerate(points):
-            u = i / (n - 1)
-            qx, qy = points[i - 1] if i else (px + math.cos(self.heading), py + math.sin(self.heading))
-            ax, ay = qx - px, qy - py  # toward the head
-            d = math.hypot(ax, ay) or 1.0
-            nx, ny = -ay / d, ax / d
-            side = sweep * u ** 1.6 * math.sin(self.phase - u * 3.2)
-            x, y = px + nx * side, py + ny * side
-            color = self.colors[i]
-            if self.shimmer:
-                color = mix(color, (255, 255, 240), 0.25 * max(0.0, math.sin(t * 1.6 - i * 0.7)))
-            body.add(x, y, self.radii[i], alpha, mix(color, WATER, fade))
-            shadow.add(x + offset * SHADOW_DX, y + offset * SHADOW_DY, self.radii[i] + 0.3, shade)
-            fin = mix(self.fin_color, WATER, fade + 0.15)
-            if i == max(1, round(0.24 * (n - 1))):
-                # Pectoral fins, sculling
-                reach = self.radii[i] + 0.55 + 0.25 * math.sin(self.phase * 0.5)
-                back = 0.35
-                for s in (1, -1):
-                    body.add(x + nx * reach * s - ax / d * back, y + ny * reach * s - ay / d * back,
-                             0.6, 0.5 * alpha, fin)
-            if i == n - 1:
-                # The tail fin, a fan behind the last point
-                for s in (1, -1):
-                    spread = 0.7 + 0.25 * math.sin(self.phase + s)
-                    body.add(x - ax / d * 0.9 + nx * spread * s, y - ay / d * 0.9 + ny * spread * s,
-                             0.65, 0.55 * alpha, fin)
+        shadow.add_many(spine[:, 0] + offset * SHADOW_DX, spine[:, 1] + offset * SHADOW_DY,
+                        self.radius_array + 0.3, 0.2 + 0.12 * z, colors)
+
+        fin = mix(self.fin_color, WATER, fade + 0.15)
+        # Pectoral fins, sculling
+        i = self.fin_at
+        (x, y), (ax, ay), (nx, ny) = spine[i], ahead[i], across[i]
+        reach = self.radii[i] + 0.55 + 0.25 * math.sin(self.phase * 0.5)
+        for s in (1, -1):
+            body.add(x + nx * reach * s - ax * 0.35, y + ny * reach * s - ay * 0.35, 0.6, 0.5 * alpha, fin)
+        # The tail fin, a fan behind the last point
+        (x, y), (ax, ay), (nx, ny) = spine[-1], ahead[-1], across[-1]
+        for s in (1, -1):
+            spread = 0.7 + 0.25 * math.sin(self.phase + s)
+            body.add(x - ax * 0.9 + nx * spread * s, y - ay * 0.9 + ny * spread * s, 0.65, 0.55 * alpha, fin)
         if self.gulp:
             mx, my = self.mouth()
             body.add(mx, my, 0.5, 0.8, (40, 22, 22))
@@ -359,10 +420,10 @@ class PondEvent(Event):
     def shadows(self, shadow: Discs) -> None:
         pass
 
-    def under(self, flat: np.ndarray, t: float) -> None:
+    def under(self, frame: np.ndarray, t: float) -> None:
         pass
 
-    def above(self, flat: np.ndarray, t: float) -> None:
+    def above(self, frame: np.ndarray, t: float) -> None:
         pass
 
 
@@ -377,7 +438,7 @@ class Pond(Tank):
         self.fish = []  # (the Tank's fish; the koi swim differently)
         varieties = random.sample(VARIETIES, KOI - 1) + [random.choice(("kohaku", "ogon", "showa"))]
         self.koi = [Koi(self, v) for v in varieties]
-        self.ripples: list[list[float]] = []  # [x, y, age, strength]
+        self.ripples: list[list] = []  # [x, y, age, strength, life]
         self.glints: list[list[float]] = []  # [x, y, age, life]
         self.frame_count = 0
         self.light = self.light_to = 1.0  # sunlight, dimmed by rain
@@ -396,8 +457,8 @@ class Pond(Tank):
         for _ in range(110):
             stones.add(rng.uniform(-1, WIDTH), rng.uniform(-1, HEIGHT), rng.uniform(0.5, 1.4),
                        rng.uniform(0.5, 0.95), rng.choice(PEBBLES))
-        stones.paint(floor)
         floor = floor.reshape(HEIGHT, WIDTH, 3)
+        stones.paint(floor)
         # Deeper toward the middle
         edge = np.minimum(np.minimum(XX, WIDTH - 1 - XX) / 18, np.minimum(YY, HEIGHT - 1 - YY) / 10)
         floor *= (1.05 - 0.25 * np.clip(edge, 0, 1))[..., None]
@@ -427,7 +488,6 @@ class Pond(Tank):
                 pad = np.array(PAD_DARK, np.float32) + (np.array(PAD_LIGHT, np.float32) - PAD_DARK) * tone
                 color += (pad - color) * cover[..., None]
                 np.maximum(alpha, cover, out=alpha)
-        flat_color = color.reshape(-1, 3)
         lotus = Discs()
         cx, cy, r = PADS[LOTUS_PAD]
         lx, ly = cx - 0.8, cy - 0.8
@@ -436,17 +496,18 @@ class Pond(Tank):
             lotus.add(lx + math.cos(a) * 1.3, ly + math.sin(a) * 1.3, 0.85, 1.0, PETAL)
             lotus.add(lx + math.cos(a) * 1.8, ly + math.sin(a) * 1.8, 0.4, 0.8, PETAL_TIP)
         lotus.add(lx, ly, 0.7, 1.0, LOTUS_HEART)
-        lotus.paint(flat_color)
-        self.pad_color = flat_color.copy()
-        self.pad_alpha = alpha.reshape(-1)
-        self.pad_shadow = shadow.reshape(-1)
+        lotus.paint(color)
+        self.pad_color = color
+        self.pad_color = self.pad_color.reshape(HEIGHT, WIDTH, 3)
+        self.pad_alpha = alpha[..., None]
+        self.pad_shadow = shadow
 
     def on_pad(self, x: float, y: float, margin: float = 0.0) -> bool:
         return any(math.hypot(x - cx, y - cy) < r - margin for cx, cy, r in PADS)
 
-    def ripple(self, x: float, y: float, strength: float = 0.6) -> None:
+    def ripple(self, x: float, y: float, strength: float = 0.6, life: int = RIPPLE_FRAMES) -> None:
         if -10 < x < WIDTH + 10 and -10 < y < HEIGHT + 10 and not self.on_pad(x, y):
-            self.ripples.append([x, y, 0.0, strength])
+            self.ripples.append([x, y, 0, strength, life])
 
     # Drawing ----------------------------------------------------------
 
@@ -462,24 +523,23 @@ class Pond(Tank):
     def draw_ripples(self, frame: np.ndarray) -> None:
         live = []
         for ripple in self.ripples:
-            x, y, age, strength = ripple
+            x, y, age, strength, life = ripple
             ripple[2] += 1
-            if age >= RIPPLE_FRAMES:
+            if age >= life:
                 continue
             live.append(ripple)
-            r = age * RIPPLE_SPEED
-            fade = strength * (1 - age / RIPPLE_FRAMES) ** 1.5
-            reach = r + 2.5
-            x0, x1 = max(0, int(x - reach)), min(WIDTH, int(x + reach) + 2)
-            y0, y1 = max(0, int(y - reach)), min(HEIGHT, int(y + reach) + 2)
+            fade = strength * (1 - age / life) ** 1.5
+            dim, glow = RINGS[int(age)]
+            reach = dim.shape[0] // 2
+            cx, cy = round(x), round(y)
+            x0, y0 = max(0, cx - reach), max(0, cy - reach)
+            x1, y1 = min(WIDTH, cx + reach + 1), min(HEIGHT, cy + reach + 1)
             if x0 >= x1 or y0 >= y1:
                 continue
-            d = np.hypot(XX[y0:y1, x0:x1] - x, YY[y0:y1, x0:x1] - y)
-            crest = np.exp(-((d - r) / 0.65) ** 2) * fade
-            trough = np.exp(-((d - r + 1.2) / 0.65) ** 2) * fade
+            kx, ky = x0 - (cx - reach), y0 - (cy - reach)
             region = frame[y0:y1, x0:x1]
-            region *= (1 + 0.55 * crest - 0.3 * trough)[..., None]
-            region += (crest * 26)[..., None]
+            region *= 1 + dim[ky:ky + y1 - y0, kx:kx + x1 - x0] * fade
+            region += glow[ky:ky + y1 - y0, kx:kx + x1 - x0] * fade
         self.ripples = live
 
     def draw_glints(self, frame: np.ndarray) -> None:
@@ -507,7 +567,6 @@ class Pond(Tank):
 
         caustic = self.caustic_light(t) * (CAUSTIC_HIGH * self.caustics)
         frame = self.floor_rgb * (self.light * (CAUSTIC_LOW + caustic))[..., None]
-        flat = frame.reshape(-1, 3)
 
         # Shadows on the floor, then the koi from the deepest up
         shadow = Discs()
@@ -515,17 +574,17 @@ class Pond(Tank):
         if self.event:
             self.event.shadows(shadow)
         shade = np.minimum(shadow.shade() + self.pad_shadow, SHADOW_MAX)
-        flat *= (1 - shade * self.light)[:, None]
+        frame *= (1 - shade * self.light)[..., None]
         for z, body in sorted(bodies, key=lambda b: -b[0]):
-            body.paint(flat)
+            body.paint(frame)
         if self.event:
-            self.event.under(flat, t)
+            self.event.under(frame, t)
         self.draw_ripples(frame)
 
         # The lily pads, then whatever's on or above the water
-        flat += (self.pad_color * self.light - flat) * self.pad_alpha[:, None]
+        frame += (self.pad_color * self.light - frame) * self.pad_alpha
         if self.event:
-            self.event.above(flat, t)
+            self.event.above(frame, t)
         self.draw_glints(frame)
         self.frame_count += 1
         return np.clip(frame, 0, 255).astype(np.uint8).reshape(-1)
@@ -598,12 +657,12 @@ class Feeding(PondEvent):
         for p in self.live():
             shadow.add(p["x"] + 2.5 * SHADOW_DX, p["y"] + 2.5 * SHADOW_DY, 0.4, 0.3)
 
-    def above(self, flat: np.ndarray, t: float) -> None:
+    def above(self, frame: np.ndarray, t: float) -> None:
         food = Discs()
         for p in self.live():
             bob = 0.15 * math.sin(t * 3 + p["at"])
             food.add(p["x"], p["y"] + bob, 0.45, 1.0, PELLET)
-        food.paint(flat)
+        food.paint(frame)
 
 
 class Rain(PondEvent):
@@ -626,11 +685,11 @@ class Rain(PondEvent):
         heavy = max(0.0, min(1.0, f / self.ramp, (self.frames - f) / self.ramp))
         self.tank.light_to = 1 - 0.25 * heavy
         self.tank.caustics_to = 1 - 0.85 * heavy
-        drops = heavy * 1.1
+        drops = heavy * 0.9
         while drops > 0:
             if random.random() < drops:
                 self.tank.ripple(random.uniform(-2, WIDTH + 2), random.uniform(-2, HEIGHT + 2),
-                                 random.uniform(0.3, 0.6))
+                                 random.uniform(0.5, 0.9), RAINDROP_FRAMES)
             drops -= 1
         return f < self.frames
 
@@ -740,12 +799,12 @@ class Dragonfly(PondEvent):
             for x, y, r, w in zip(discs.x, discs.y, discs.r, discs.w):
                 shadow.add(x + lift * SHADOW_DX, y + lift * SHADOW_DY, r, 0.18)
 
-    def above(self, flat: np.ndarray, t: float) -> None:
+    def above(self, frame: np.ndarray, t: float) -> None:
         resting = self.doing == "rest" and self.wait
         wings = 0.6 if resting else random.uniform(0.25, 0.6)  # a blur in flight
         wing, body = self.creature(wings)
-        wing.paint(flat)
-        body.paint(flat)
+        wing.paint(frame)
+        body.paint(frame)
 
 
 class Heron(PondEvent):
@@ -809,8 +868,8 @@ class Heron(PondEvent):
                 bird.add(x + c * sweep + nx * k * side, y + s * sweep + ny * k * side, 1.9 - 0.1 * k, 1.0)
         return bird
 
-    def above(self, flat: np.ndarray, t: float) -> None:
-        flat *= (1 - np.minimum(self.shape().shade(), 1.0) * 0.62)[:, None]
+    def above(self, frame: np.ndarray, t: float) -> None:
+        frame *= (1 - np.minimum(self.shape().shade(), 1.0) * 0.62)[..., None]
 
 
 FROG = (92, 104, 34)  # olive, to stand out on a green pad
@@ -950,13 +1009,13 @@ class Frog(PondEvent):
             for x, y, r in zip(frog.x, frog.y, frog.r):
                 shadow.add(x + lift * SHADOW_DX, y + lift * SHADOW_DY, r, 0.25)
 
-    def under(self, flat: np.ndarray, t: float) -> None:
+    def under(self, frame: np.ndarray, t: float) -> None:
         if self.phase in ("swim", "leave"):
-            self.creature(True).paint(flat)
+            self.creature(True).paint(frame)
 
-    def above(self, flat: np.ndarray, t: float) -> None:
+    def above(self, frame: np.ndarray, t: float) -> None:
         if self.phase in ("climb", "sit", "jump"):
-            self.creature(False).paint(flat)
+            self.creature(False).paint(frame)
 
 
 LEAF_COLORS = [(232, 112, 30), (214, 60, 32), (240, 178, 40), (196, 84, 36)]
@@ -1023,7 +1082,7 @@ class Leaves(PondEvent):
                 lift = 1.5 + height * 6
                 self.shape(leaf, shadow, lift * SHADOW_DX, lift * SHADOW_DY, 0.2)
 
-    def above(self, flat: np.ndarray, t: float) -> None:
+    def above(self, frame: np.ndarray, t: float) -> None:
         discs = Discs()
         for leaf in self.leaves:
             height = self.falling(leaf)
@@ -1032,7 +1091,7 @@ class Leaves(PondEvent):
             # Fluttering down: swinging side to side as it falls
             swing = math.sin(self.frame_count * 0.25 + leaf["spin"]) * 1.5 * height
             self.shape(leaf, discs, swing, -height * 2)
-        discs.paint(flat)
+        discs.paint(frame)
 
 
 Pond.EVENTS = {
