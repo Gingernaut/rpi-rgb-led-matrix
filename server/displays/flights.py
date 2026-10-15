@@ -384,47 +384,58 @@ def rgb(color) -> np.ndarray:
     return np.array(color, np.float32)
 
 
-def mask(rows: list[str], chars: str = None) -> np.ndarray:
-    """A sprite's opaque pixels (or just those in chars) as a 0/1 array."""
-    return np.array([[c != "." if chars is None else c in chars for c in row] for row in rows], np.float32)
+def mask(rows: list[str]) -> np.ndarray:
+    """A sprite's opaque pixels as a 0/1 array."""
+    return np.array([[c != "." for c in row] for row in rows], np.float32)
 
 
-def stamp(frame: np.ndarray, alpha: np.ndarray, left: float, top: float, color) -> None:
-    """Paint color through alpha (a 2D 0-1 mask) with its top-left corner at
-    a sub-pixel position, spread over neighboring pixels so it glides."""
-    x0, y0 = math.floor(left), math.floor(top)
-    fx, fy = left - x0, top - y0
-    h, w = alpha.shape
-    a = np.zeros((h + 1, w + 1), np.float32)
-    a[:h, :w] += alpha * ((1 - fx) * (1 - fy))
-    a[:h, 1:] += alpha * (fx * (1 - fy))
-    a[1:, :w] += alpha * ((1 - fx) * fy)
-    a[1:, 1:] += alpha * (fx * fy)
-    xa, ya = max(x0, 0), max(y0, 0)
-    xb, yb = min(x0 + w + 1, frame.shape[1]), min(y0 + h + 1, frame.shape[0])
-    if xa >= xb or ya >= yb:
-        return
-    a = a[ya - y0:yb - y0, xa - x0:xb - x0, None]
-    region = frame[ya:yb, xa:xb]
-    region += (rgb(color) - region) * a
+def splat(xs: list, ys: list, weights: list) -> np.ndarray:
+    """Points at sub-pixel positions, each spread over its four nearest
+    pixels (so it glides rather than steps), summed into a layer."""
+    xs, ys, weights = (np.asarray(a, np.float32) for a in (xs, ys, weights))
+    x0, y0 = np.floor(xs), np.floor(ys)
+    fx, fy = xs - x0, ys - y0
+    x0, y0 = x0.astype(np.int32), y0.astype(np.int32)
+    index, share = [], []
+    for dx, dy, s in ((0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)):
+        xi, yi = x0 + dx, y0 + dy
+        ok = (xi >= 0) & (xi < WIDTH) & (yi >= 0) & (yi < HEIGHT)
+        index.append((yi * WIDTH + xi)[ok])
+        share.append((s * weights)[ok])
+    layer = np.bincount(np.concatenate(index), np.concatenate(share), HEIGHT * WIDTH)
+    return layer.reshape(HEIGHT, WIDTH).astype(np.float32)
+
+
+def paint(frame: np.ndarray, layer: np.ndarray, color) -> None:
+    """Paint color over the frame through a coverage layer."""
+    frame += (rgb(color) - frame) * np.minimum(layer, 1.0)[..., None]
 
 
 GLOW_DY, GLOW_DX = (a.ravel() for a in np.mgrid[-2:3, -2:3])
 
 
-def glow(frame: np.ndarray, x: float, y: float, color, level: float = 1.0, spread: float = 0.35) -> None:
-    """A light at a sub-pixel position, added to the frame: a bright core and,
-    with a bigger spread, a soft halo."""
-    if level <= 0:
+def add_lights(frame: np.ndarray, lights: list) -> None:
+    """Add lights to the frame, each (x, y, color, spread) at a sub-pixel
+    position: a bright core and, the bigger its spread, a softer halo."""
+    if not lights:
         return
-    xi = GLOW_DX + math.floor(x + 0.5)
-    yi = GLOW_DY + math.floor(y + 0.5)
-    ok = (yi >= 0) & (yi < frame.shape[0]) & (xi >= 0) & (xi < frame.shape[1])
-    if not ok.any():
-        return
-    xi, yi = xi[ok], yi[ok]
-    d2 = ((xi - x) ** 2 + (yi - y) ** 2).astype(np.float32)
-    frame[yi, xi] += (np.exp(-d2 / spread) * level)[:, None] * rgb(color)
+    xs, ys, colors, spreads = zip(*lights)
+    x, y = np.array(xs, np.float32)[:, None], np.array(ys, np.float32)[:, None]
+    xi = np.floor(x + 0.5).astype(np.int32) + GLOW_DX
+    yi = np.floor(y + 0.5).astype(np.int32) + GLOW_DY
+    weight = np.exp(-((xi - x) ** 2 + (yi - y) ** 2) / np.array(spreads, np.float32)[:, None])
+    ok = (xi >= 0) & (xi < WIDTH) & (yi >= 0) & (yi < HEIGHT)
+    index = (yi * WIDTH + xi)[ok]
+    which = np.broadcast_to(np.arange(len(lights))[:, None], xi.shape)[ok]
+    weight = weight[ok]
+    colors = np.array(colors, np.float32)
+    for channel in range(3):
+        frame[..., channel] += np.bincount(index, weight * colors[which, channel],
+                                           HEIGHT * WIDTH).reshape(HEIGHT, WIDTH)
+
+
+def lit(color, level: float) -> tuple:
+    return tuple(c * level for c in color)
 
 
 # --- Planes ------------------------------------------------------------------
@@ -685,16 +696,22 @@ class Flights:
         self.text_cache: dict = {}
         self.icons = {name: mask(rows) for name, rows in
                       (("up", UP_ARROW), ("down", DOWN_ARROW), ("route", ROUTE_ARROW))}
+        # Each sprite, facing right and left: its size, body pixels and lights
         self.sprites = {}
         for kind in (AIRLINER, LIGHT_PLANE, HELICOPTER):
             for size, rows in kind.items():
-                right = {"body": mask(rows, "#wtn"), "rows": rows}
-                left = {"body": mask([r[::-1] for r in rows], "#wtn"), "rows": [r[::-1] for r in rows]}
-                self.sprites[id(kind), size] = (right, left)
+                self.sprites[id(kind), size] = tuple(
+                    (len(f[0]), len(f), [(c, r) for r, row in enumerate(f) for c, ch in enumerate(row) if ch != "."],
+                     [(c, r, ch) for r, row in enumerate(f) for c, ch in enumerate(row) if ch in "wtn"])
+                    for f in (rows, [row[::-1] for row in rows]))
         self.make_horizon()
         rng = random.Random(7)
-        self.stars = [(rng.uniform(0, WIDTH - 1), rng.uniform(0, HORIZON_ROW - 4), rng.uniform(0.3, 1.0),
-                       rng.uniform(0, math.tau)) for _ in range(STARS)]
+        self.star_x = np.array([rng.randrange(WIDTH) for _ in range(STARS)])
+        self.star_y = np.array([rng.randrange(HORIZON_ROW - 3) for _ in range(STARS)])
+        self.star_level = np.array([rng.uniform(0.3, 1.0) for _ in range(STARS)], np.float32)
+        self.star_phase = np.array([rng.uniform(0, math.tau) for _ in range(STARS)], np.float32)
+        self.strip = None
+        self.strip_key = None
         self.sky = None
         self.sky_time = -math.inf
         self.light = 1.0  # daylight, 0 (night) to 1
@@ -743,20 +760,26 @@ class Flights:
                     if ch != "." and 0 <= x0 + c < WIDTH:
                         city[x0 + c, HORIZON_ROW + 1 - len(rows) + r] = ch
         self.city = city
-        self.windows = [p for p, ch in city.items() if ch == "o" or (ch == "#" and rng.random() < 0.3)]
-        self.tops = [p for p, ch in city.items() if ch == "r"]
+        # Lights at night, as (columns, rows)
+        self.windows = tuple(map(np.array, zip(*[p for p, ch in city.items()
+                                                 if ch == "o" or (ch == "#" and rng.random() < 0.3)])))
+        self.tops = tuple(map(np.array, zip(*[p for p, ch in city.items() if ch == "r"])))
+        self.houses = (np.array(rng.sample(range(WIDTH), 9)), np.full(9, HORIZON_ROW))
         self.beacons = [round(landmark_x(SEA_TAC)), round(landmark_x(BOEING_FIELD))]
-        self.houses = [(c, HORIZON_ROW) for c in rng.sample(range(WIDTH), 9)]
         # The top row of the scenery in each column (planes below it are hidden)
         skyline = HORIZON_ROW + 1 - self.trees
         for (c, r) in city:
             skyline[c] = min(skyline[c], r)
         self.skyline = skyline
 
-    def draw_horizon(self, frame: np.ndarray, t: float) -> None:
+    def make_scenery(self) -> None:
+        """The scenery along the horizon in today's light, as a layer and the
+        mask of where it is, remade with the sky."""
         light = self.light
-        dark = 1 - light
-        # The Olympics: blue with snowy peaks by day, dark against a sunset
+        scenery = np.zeros((HEIGHT, WIDTH, 3), np.float32)
+        solid = np.zeros((HEIGHT, WIDTH), bool)
+        # The Olympics: blue with snowy peaks by day, dark against a sunset,
+        # gone at night
         sun_el = self.sun[0]
         day = min(1.0, max(0.0, (sun_el - 3) / 10))
         dusk = min(1.0, max(0.0, (sun_el + 9) / 6))
@@ -764,37 +787,41 @@ class Flights:
         for c in range(WIDTH):
             height = self.mountains[c]
             if height and dusk > 0:
-                color = (horizon[c] * 0.55 + (rgb(MOUNTAIN_DAY) - horizon[c] * 0.55) * day)
+                color = horizon[c] * 0.55 + (rgb(MOUNTAIN_DAY) - horizon[c] * 0.55) * day
                 color = horizon[c] + (color - horizon[c]) * dusk
-                frame[HORIZON_ROW + 1 - height:HORIZON_ROW + 1, c] = color
-                # Snow on the peaks
-                peak = height >= 4 and height >= max(self.mountains[max(c - 1, 0):c + 2])
-                if peak:
-                    top = HORIZON_ROW + 1 - height
-                    frame[top, c] = color + (rgb(SNOW) - color) * 0.7 * day
-        trees = rgb(TREES_NIGHT) + (rgb(TREES_DAY) - rgb(TREES_NIGHT)) * light
+                top = HORIZON_ROW + 1 - height
+                scenery[top:HORIZON_ROW + 1, c] = color
+                solid[top:HORIZON_ROW + 1, c] = True
+                if height >= 4 and height >= max(self.mountains[max(c - 1, 0):c + 2]):
+                    scenery[top, c] = color + (rgb(SNOW) - color) * 0.7 * day
         towers = rgb(TOWERS_NIGHT) + (rgb(TOWERS_DAY) - rgb(TOWERS_NIGHT)) * light
         for (c, r) in self.city:
-            frame[r, c] = towers
+            scenery[r, c] = towers
+            solid[r, c] = True
+        trees = rgb(TREES_NIGHT) + (rgb(TREES_DAY) - rgb(TREES_NIGHT)) * light
         for c in range(WIDTH):
-            frame[HORIZON_ROW + 1 - self.trees[c]:HORIZON_ROW + 1, c] = trees
-        if dark > 0.3:
-            fade = min(1.0, (dark - 0.3) / 0.4)
-            for c, r in self.windows:
-                frame[r, c] = np.maximum(frame[r, c], rgb(WINDOW_LIGHT) * fade)
-            for c, r in self.houses:
-                frame[r, c] = np.maximum(frame[r, c], rgb(HOUSE_LIGHT) * fade * 0.6)
-            # Red lights atop the tallest towers and the Needle, slowly blinking
-            blink = 0.5 + 0.5 * math.cos(t * math.tau / 2.0)
-            for c, r in self.tops:
-                frame[r, c] = np.maximum(frame[r, c], rgb(TOWER_BEACON) * blink * fade)
-            # Airport beacons: a white flash, then a green one
-            for i, c in enumerate(self.beacons):
-                phase = (t / 2.0 + i * 0.37) % 1.0
-                if 0 <= c < WIDTH and phase < 0.12:
-                    frame[HORIZON_ROW - self.trees[c], c] = rgb(STROBE) * 0.8 * fade
-                elif 0 <= c < WIDTH and 0.5 <= phase < 0.62:
-                    frame[HORIZON_ROW - self.trees[c], c] = rgb(GREEN_LIGHT) * 0.8 * fade
+            scenery[HORIZON_ROW + 1 - self.trees[c]:HORIZON_ROW + 1, c] = trees
+            solid[HORIZON_ROW + 1 - self.trees[c]:HORIZON_ROW + 1, c] = True
+        self.scenery, self.solid = scenery, solid
+
+    def draw_horizon(self, frame: np.ndarray, t: float) -> None:
+        frame[self.solid] = self.scenery[self.solid]
+        dark = 1 - self.light
+        if dark <= 0.3:
+            return
+        fade = min(1.0, (dark - 0.3) / 0.4)
+        for points, color in ((self.windows, WINDOW_LIGHT), (self.houses, lit(HOUSE_LIGHT, 0.6))):
+            cols, rows = points
+            frame[rows, cols] = np.maximum(frame[rows, cols], rgb(color) * fade)
+        # Red lights atop the tallest towers and the Needle, slowly blinking
+        cols, rows = self.tops
+        blink = 0.5 + 0.5 * math.cos(t * math.tau / 2.0)
+        frame[rows, cols] = np.maximum(frame[rows, cols], rgb(TOWER_BEACON) * (blink * fade))
+        # Airport beacons: a white flash, then a green one
+        for i, c in enumerate(self.beacons):
+            phase = (t / 2.0 + i * 0.37) % 1.0
+            if 0 <= c < WIDTH and (phase < 0.12 or 0.5 <= phase < 0.62):
+                frame[HORIZON_ROW - self.trees[c], c] = rgb(STROBE if phase < 0.5 else GREEN_LIGHT) * (0.8 * fade)
 
     # The sky --------------------------------------------------------------
 
@@ -824,25 +851,25 @@ class Flights:
         sky += np.exp(-distance / GLOW_WIDTH)[..., None] * sun_glow
         self.sky = sky.astype(np.float32)
         self.light = min(1.0, max(0.0, (sun_el + 8) / 10))
+        self.make_scenery()
 
-    def draw_sky(self, frame: np.ndarray, t: float) -> None:
+    def draw_sky(self, frame: np.ndarray, t: float, lights: list) -> None:
         frame[:HORIZON_ROW + 1] = self.sky
         stars = min(1.0, max(0.0, (-self.sun[0] - 7) / 5))
         if stars > 0:
-            for x, y, level, phase in self.stars:
-                twinkle = 0.75 + 0.25 * math.sin(t * 1.7 + phase)
-                frame[round(y), round(x)] += rgb(STAR_COLOR) * (level * twinkle * stars)
-        moon_el, moon_az, lit = self.moon
+            twinkle = self.star_level * (0.75 + 0.25 * np.sin(t * 1.7 + self.star_phase)) * stars
+            frame[self.star_y, self.star_x] += twinkle[:, None] * rgb(STAR_COLOR)
+        moon_el, moon_az, phase = self.moon
         x = view_x(moon_az)
         if moon_el > -1 and -2 < x < WIDTH + 1:
-            level = (0.35 + 0.65 * lit) * (0.45 if self.light > 0.6 else 1.0)
-            glow(frame, x, view_y(moon_el + 0.5), MOON_COLOR, level, spread=0.9)
+            level = (0.35 + 0.65 * phase) * (0.45 if self.light > 0.6 else 1.0)
+            lights.append((x, view_y(moon_el + 0.5), lit(MOON_COLOR, level), 0.9))
         sun_el, sun_az = self.sun
         x = view_x(sun_az)
         if sun_el > -1.5 and -2 < x < WIDTH + 1:
             low = min(1.0, max(0.0, (8 - sun_el) / 8))
             color = rgb(SUN_COLOR) + (rgb(SUNSET_COLOR) - rgb(SUN_COLOR)) * low
-            glow(frame, x, view_y(sun_el + 0.5), color, 1.0, spread=1.1)
+            lights.append((x, view_y(sun_el + 0.5), tuple(color), 1.1))
 
     # Planes ---------------------------------------------------------------
 
@@ -885,7 +912,8 @@ class Flights:
         c = round(x)
         return not (0 <= c < WIDTH) or y >= self.skyline[c] - 0.5 or y < 0
 
-    def draw_contrail(self, frame: np.ndarray, plane: Plane, now: float) -> None:
+    def contrail(self, plane: Plane, now: float, trail: tuple) -> None:
+        """Add a high jet's contrail to trail's (xs, ys, weights)."""
         if plane.feet < CONTRAIL_FEET or self.light < 0.4:
             plane.trail.clear()
             return
@@ -894,44 +922,47 @@ class Flights:
             plane.trail.append((plane.az, plane.el))
             del plane.trail[:-CONTRAIL_SAMPLES]
         n = len(plane.trail)
+        xs, ys, weights = trail
         for i, (az, el) in enumerate(plane.trail[:-1]):
             x, y = view_x(az), view_y(el)
             if not self.hidden(x, y):
-                fade = (i + 1) / n
-                stamp(frame, ONE * (0.5 * fade * self.light), x, y, CONTRAIL)
+                xs.append(x)
+                ys.append(y)
+                weights.append(0.5 * (i + 1) / n * self.light)
 
-    def draw_plane(self, frame: np.ndarray, plane: Plane, x: float, y: float, distance: float, t: float) -> tuple:
-        """Draw a plane centered at (x, y); returns its box (left, top, right, bottom)."""
+    def plane(self, plane: Plane, x: float, y: float, distance: float, t: float,
+              body: tuple, lights: list) -> tuple:
+        """Add a plane centered at (x, y) to body's (xs, ys, weights) and to
+        lights; returns its box (left, top, right, bottom)."""
         size = "near" if distance < NEAR else "mid" if distance < MID else "far"
-        kind = plane.kind()
-        sprite = self.sprites[id(kind), size][plane.facing < 0]
-        body = sprite["body"]
-        h, w = body.shape
+        w, h, pixels, spots = self.sprites[id(plane.kind()), size][plane.facing < 0]
         left, top = x - (w - 1) / 2, y - (h - 1) / 2
-        light = self.light
-        color = rgb(PLANE_NIGHT) + (rgb(PLANE_DAY) - rgb(PLANE_NIGHT)) * light
         # Far off, a plane is a faint speck by day and only lights by night
         presence = 1.0 if size != "far" else 0.6
-        stamp(frame, body * presence, left, top, color)
-        night = 1 - light
-        lights = 0.55 + 0.45 * night
+        xs, ys, weights = body
+        for c, r in pixels:
+            xs.append(left + c)
+            ys.append(top + r)
+            weights.append(presence)
+        night = 1 - self.light
+        level = 0.55 + 0.45 * night
         # Navigation light on the near wingtip: green heading right (north,
         # its right side toward the window), red heading left
-        nav = GREEN_LIGHT if plane.facing > 0 else RED_LIGHT
-        strobe_on = (t + plane.phase) % 1.1 < 0.07 or 0.2 < (t + plane.phase) % 1.1 < 0.27
-        beacon_on = (t * 0.9 + plane.phase * 0.5) % 1.0 < 0.15
-        for r, row in enumerate(sprite["rows"]):
-            for c, ch in enumerate(row):
-                px, py = left + c, top + r
-                if ch == "w":
-                    glow(frame, px, py, nav, 0.5 * lights)
-                elif ch == "t":
-                    if strobe_on:
-                        glow(frame, px, py, STROBE, lights, spread=0.5)
-                    elif beacon_on:
-                        glow(frame, px, py, RED_LIGHT, 0.7 * lights)
-                elif ch == "n" and plane.landing_lights():
-                    glow(frame, px, py, LANDING_LIGHT, 0.5 + 0.6 * night, spread=0.6 + 0.6 * night)
+        nav = lit(GREEN_LIGHT if plane.facing > 0 else RED_LIGHT, 0.5 * level)
+        flash = (t + plane.phase) % 1.1
+        strobe = flash < 0.07 or 0.2 < flash < 0.27
+        beacon = (t * 0.9 + plane.phase * 0.5) % 1.0 < 0.15
+        landing = plane.landing_lights()
+        for c, r, ch in spots:
+            px, py = left + c, top + r
+            if ch == "w":
+                lights.append((px, py, nav, 0.35))
+            elif ch == "t" and strobe:
+                lights.append((px, py, lit(STROBE, level), 0.5))
+            elif ch == "t" and beacon:
+                lights.append((px, py, lit(RED_LIGHT, 0.7 * level), 0.35))
+            elif ch == "n" and landing:
+                lights.append((px, py, lit(LANDING_LIGHT, 0.5 + 0.6 * night), 0.6 + 0.6 * night))
         return left - 1, top - 1, left + w, top + h
 
     def feature(self, seen: list, now: float) -> None:
@@ -979,18 +1010,20 @@ class Flights:
             found = self.text_cache[text] = self.font.render(text, proportional=True)
         return found
 
-    def put(self, frame: np.ndarray, art: np.ndarray, x: int, row: int, color, level: float = 1.0) -> None:
-        """Paint a mask (text or icon) at column x of a strip line (0 or 1)."""
-        top = STRIP_TOP + row * self.font.height
-        if art.shape[0] < self.font.height:  # an icon: on the text's baseline
+    def put(self, strip: np.ndarray, part: str, x: int, row: int, color) -> None:
+        """Paint text (or an icon, by name) at column x of a strip line (0 or 1)."""
+        art = self.icons.get(part)
+        top = row * self.font.height
+        if art is None:
+            art = self.text(part)
+        else:  # on the text's baseline
             top += self.font.ascent - art.shape[0]
         w = min(art.shape[1], WIDTH - x)
-        if w <= 0 or x < 0:
-            return
-        frame[top:top + art.shape[0], x:x + w] += art[:, :w, None] * (rgb(color) * level)
+        if w > 0 and x >= 0:
+            strip[top:top + art.shape[0], x:x + w] += art[:, :w, None] * rgb(color)
 
     def card(self, plane: Plane, now: float) -> tuple[list, list]:
-        """The strip's two lines for a plane: ([(mask, color, x)], ...)."""
+        """The strip's two lines for a plane, each [(text or icon name, color, x)]."""
         name, color = None, DEFAULT_AIRLINE
         match = CALLSIGN.match(plane.callsign)
         route = None
@@ -1013,19 +1046,16 @@ class Flights:
                 name = plane.owner.title()
         if self.text_width(name) > WIDTH - 2 * MARGIN:
             name = plane.callsign or name
-        first = [(self.text(name), color, MARGIN)]
+        first = [(name, color, MARGIN)]
 
         # Altitude, with an arrow climbing or descending, at the right
         altitude = f"{round(plane.feet / 100) * 100}ft"
-        right = [self.text(altitude)]
-        climbing = self.icons["up"] if plane.climb > 300 else self.icons["down"] if plane.climb < -300 else None
-        alt_w = right[0].shape[1]
-        second = []
-        x = WIDTH - MARGIN - alt_w
-        second.append((right[0], TEXT, x))
-        if climbing is not None:
-            x -= climbing.shape[1] + 1
-            second.append((climbing, CLIMB_COLOR if plane.climb > 0 else DESCEND_COLOR, x))
+        x = WIDTH - MARGIN - self.text_width(altitude)
+        second = [(altitude, TEXT, x)]
+        climbing = "up" if plane.climb > 300 else "down" if plane.climb < -300 else None
+        if climbing:
+            x -= self.icons[climbing].shape[1] + 1
+            second.append((climbing, CLIMB_COLOR if climbing == "up" else DESCEND_COLOR, x))
         room = x - 2 - MARGIN
         # On the left, the route and the type, taking turns
         options = []
@@ -1043,12 +1073,11 @@ class Flights:
         if options:
             which, value = options[int(now / LINE_SECONDS) % len(options)]
             if which == "route":
-                a, b = self.text(value["from"]), self.text(value["to"])
-                arrow = self.icons["route"]
-                second += [(a, TEXT, MARGIN), (arrow, DIM_TEXT, MARGIN + a.shape[1] + 1),
-                           (b, TEXT, MARGIN + a.shape[1] + arrow.shape[1] + 2)]
+                a = self.text_width(value["from"])
+                second += [(value["from"], TEXT, MARGIN), ("route", DIM_TEXT, MARGIN + a + 1),
+                           (value["to"], TEXT, MARGIN + a + self.icons["route"].shape[1] + 2)]
             else:
-                second.append((self.text(value), DIM_TEXT, MARGIN))
+                second.append((value, DIM_TEXT, MARGIN))
         return first, second
 
     def text_width(self, text: str) -> int:
@@ -1062,12 +1091,16 @@ class Flights:
             clock = datetime.fromtimestamp(now, TIMEZONE)
             label = f"{clock.hour % 12 or 12}:{clock.minute:02d} {'AM' if clock.hour < 12 else 'PM'}"
             quiet = "no flight data" if time.time() - self.feed.polled_at > NO_DATA_SECONDS else "no planes in view"
-            t1, t2 = self.text(label), self.text(quiet)
-            first = [(t1, TEXT, (WIDTH - t1.shape[1]) // 2)]
-            second = [(t2, DIM_TEXT, (WIDTH - t2.shape[1]) // 2)]
-        for row, parts in enumerate((first, second)):
-            for art, color, x in parts:
-                self.put(frame, art, x, row, color, fade)
+            first = [(label, TEXT, (WIDTH - self.text_width(label)) // 2)]
+            second = [(quiet, DIM_TEXT, (WIDTH - self.text_width(quiet)) // 2)]
+        key = (tuple(first), tuple(second), round(fade, 2))
+        if key != self.strip_key:
+            strip = np.zeros((HEIGHT - STRIP_TOP, WIDTH, 3), np.float32)
+            for row, parts in enumerate((first, second)):
+                for part, color, x in parts:
+                    self.put(strip, part, x, row, color)
+            self.strip, self.strip_key = strip * fade, key
+        frame[STRIP_TOP:] = self.strip
 
     # The frame ------------------------------------------------------------
 
@@ -1075,19 +1108,26 @@ class Flights:
         now = self.now()
         t = self.frame_count * FRAME_SECONDS
         self.update_sky(now)
-        frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
-        self.draw_sky(frame, t)
+        frame = np.empty((HEIGHT, WIDTH, 3), np.float32)
+        lights = []
+        self.draw_sky(frame, t, lights)
 
         self.track(now)
         seen = self.in_view(now)
         self.feature(seen, now)
+        body, trail = ([], [], []), ([], [], [])
         marker = None
-        # Farthest first, so nearer planes pass in front
-        for distance, plane, x, y in reversed(seen):
-            self.draw_contrail(frame, plane, now)
-            box = self.draw_plane(frame, plane, x, y, distance, t)
+        for distance, plane, x, y in seen:
+            self.contrail(plane, now, trail)
+            box = self.plane(plane, x, y, distance, t, body, lights)
             if plane is self.featured:
                 marker = box
+        if trail[0]:
+            paint(frame, splat(*trail), CONTRAIL)
+        if body[0]:
+            color = rgb(PLANE_NIGHT) + (rgb(PLANE_DAY) - rgb(PLANE_NIGHT)) * self.light
+            paint(frame, splat(*body), color)
+        add_lights(frame, lights)
         self.draw_horizon(frame, t)
         if marker is not None:
             color = DEFAULT_AIRLINE
@@ -1095,13 +1135,10 @@ class Flights:
             if match and match.group(1) in AIRLINES:
                 color = AIRLINES[match.group(1)][1]
             self.draw_marker(frame, marker, color, t)
-        frame[STRIP_TOP:] = 0
         self.draw_strip(frame, now)
         self.frame_count += 1
         return np.clip(frame, 0, 255).astype(np.uint8).reshape(-1)
 
-
-ONE = np.ones((1, 1), np.float32)
 
 SCENE = Flights
 
