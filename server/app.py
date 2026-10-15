@@ -24,6 +24,7 @@ ANIMATIONS = {
     "iss": "iss.py",
     "flights": "flights.py",
     "koi-pond": "koi_pond.py",
+    "tide-pool": "tide_pool.py",
 }
 
 
