@@ -9,7 +9,8 @@ seaweed stands in front of them, and the neon tetras swim as a school.
 
 Every minute or so something happens (see EVENTS): a shark cruises through
 and the fish scatter, a whale or an old submarine passes in the distance,
-jellyfish drift by, or a sea turtle paddles across. To try one out,
+jellyfish drift by, a sea turtle paddles across, or, now and then, a moray
+eel slides along the bottom. To try one out,
 AQUARIUM_EVENT shows just that one, a couple of seconds in and then every
 few seconds after (see aquarium_common):
 
@@ -140,6 +141,37 @@ TURTLE_FLIPPERS = [
     ["..K......KK...", ".K......KKK..."],  # recovering
 ]
 TURTLE_SPEED = 0.12
+
+# A green moray: its head a sprite (facing right; jaws shut, then open), its
+# long body drawn behind it as a wave runs down it
+MORAY_PALETTE = {
+    "G": (95, 150, 55), "D": (60, 105, 38), "L": (165, 195, 95), "E": (250, 235, 120),
+    "K": (10, 10, 10), "M": (120, 30, 35), "W": (240, 240, 230),
+}
+MORAY_HEAD = [
+    [
+        ".DDDD..",
+        "DGGGKG.",
+        "GGGGGGG",
+        "GLLLLLL",
+        ".LLLL..",
+    ],
+    [
+        ".DDDD..",
+        "DGGGKGG",
+        "GGGGMMW",
+        "GLLMMW.",
+        ".LLLLL.",
+    ],
+]
+MORAY_EYE = (4, 1)  # drawn with a ring of yellow around the pupil "K"
+MORAY_LENGTH = 26  # the body behind the head, in pixels
+MORAY_BACK = (60, 105, 38)
+MORAY_SIDE = (95, 150, 55)
+MORAY_BELLY = (165, 195, 95)
+MORAY_FIN = (150, 175, 70)  # the fin along its back
+MORAY_SPEED = 0.18
+MORAY_PAUSE = (4.0, 7.0)  # seconds it stops partway, gaping
 
 # The whale is drawn from a profile rather than a sprite, for a smooth round
 # body: its half-height at each point from the nose (0) to the fluke tips (1).
@@ -587,6 +619,82 @@ class Turtle(Event):
         self.sprite.draw(fb, self.tank.width, self.tank.height, round(self.x), y, self.facing, int(self.stroke))
 
 
+class Moray(Event):
+    """Now and then a moray eel slides along low among the seaweed, a wave
+    running down its long body. Partway across it stops, head raised, slowly
+    opening and shutting its jaws, then glides on. The fish keep clear."""
+
+    depth = 0.3
+
+    def __init__(self, tank: "Aquarium") -> None:
+        super().__init__(tank)
+        self.head = Sprite(MORAY_PALETTE, MORAY_HEAD, self.depth, HAZE)
+        self.facing = random.choice((1, -1))
+        # The snout starts just out of view
+        self.x = -1.0 if self.facing > 0 else tank.width + 1.0
+        self.y0 = random.uniform(tank.floor - 9, tank.floor - 5)
+        self.stop_at = tank.width * random.uniform(0.45, 0.7)
+        self.pause = frames_for(random.uniform(*MORAY_PAUSE))
+        self.speed = MORAY_SPEED
+        self.phase = 0.0
+        self.lift = 0.0  # how far it's raised its head
+        self.gape = 0  # frames into the current opening of its jaws
+        self.frame_count = 0
+        self.body = [mix(c, HAZE, self.depth * 0.22) for c in (MORAY_BACK, MORAY_SIDE, MORAY_BELLY, MORAY_FIN)]
+
+    def step(self) -> bool:
+        self.frame_count += 1
+        ahead = (self.x - self.stop_at) * self.facing
+        stopped = self.pause and ahead >= 0
+        if stopped:
+            self.pause -= 1
+            self.speed *= 0.93
+            self.lift += (1 - self.lift) * 0.05
+            self.gape = (self.gape + 1) % frames_for(1.6)
+        else:
+            self.speed += (MORAY_SPEED - self.speed) * 0.03
+            self.lift *= 0.95
+            self.gape = 0
+        self.x += self.speed * self.facing
+        # The wave runs down its body as fast as it swims, and slowly at rest
+        self.phase += 0.08 + self.speed * 0.6
+        tail = self.x - (MORAY_LENGTH + self.head.w) * self.facing
+        return (tail <= self.tank.width) if self.facing > 0 else (tail >= 0)
+
+    def at(self, i: float) -> float:
+        """The y of the body's middle i pixels back from the head."""
+        sway = (0.3 + 1.5 * i / MORAY_LENGTH) * math.sin(self.phase - i * 0.35)
+        return self.y0 + sway - self.lift * 1.8 * max(0.0, 1 - i / 8)
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        tail = self.x - (MORAY_LENGTH + self.head.w) * self.facing
+        left, right = sorted((self.x, tail))
+        return [(left, self.y0 - 4, right, self.y0 + 3)]
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        width, height = self.tank.width, self.tank.height
+        back, side, belly, fin = self.body
+        head_w = self.head.w
+        # The body, from the tail up to the back of the head, thinning toward
+        # the tail, with a fin along its back
+        for i in range(MORAY_LENGTH, 0, -1):
+            x = math.floor(self.x - (head_w + i - 1) * self.facing)
+            y = self.at(i)
+            half = 1.7 - 1.4 * i / MORAY_LENGTH
+            top, bottom = math.floor(y - half + 0.5), math.floor(y + half + 0.5)
+            for py in range(top, bottom + 1):
+                put(fb, width, height, x, py, back if py == top else belly if py == bottom and bottom - top >= 2 else side)
+            if i > 2:
+                put(fb, width, height, x, top - 1, fin)
+        # The head, raised a little when it stops, jaws working
+        open_ = self.gape > frames_for(0.5) and self.gape < frames_for(1.2)
+        hx = math.floor(self.x) - (head_w - 1 if self.facing > 0 else 0)
+        hy = math.floor(self.at(0) + 0.5) - 2
+        self.head.draw(fb, width, height, hx, hy, self.facing, 1 if open_ else 0)
+        ex = math.floor(self.head.at(hx, self.facing, MORAY_EYE))
+        put(fb, width, height, ex - self.facing, hy + MORAY_EYE[1], mix(MORAY_PALETTE["E"], HAZE, self.depth * 0.22))
+
+
 # name: (event, weight when picking one at random)
 EVENTS = {
     "shark": (Shark, 3),
@@ -594,6 +702,7 @@ EVENTS = {
     "submarine": (Submarine, 2),
     "jellyfish": (Jellyfish, 2),
     "turtle": (Turtle, 2),
+    "moray": (Moray, 1),  # only now and then
 }
 
 
