@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """The deep sea at night: black water with marine snow drifting down, a
-hydrothermal vent smoking on the sea floor among red-plumed tube worms, and a
-few deep-sea creatures, seen mostly by their own light: an anglerfish with its
-glowing lure, a trio of silver hatchetfish, lanternfish, a viperfish and a
-dumbo octopus.
+hydrothermal vent smoking and glowing on the sea floor among red-plumed tube
+worms, now and then surging, and a few deep-sea creatures, seen mostly by their
+own light: an anglerfish with its glowing lure, a pair of silver hatchetfish,
+lanternfish and a viperfish. They take turns: only one to three are in view at
+a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
 where something lights it (the vent's glow, a lure, a submersible's lamps), and
@@ -39,28 +40,41 @@ FLOOR_ROWS = 3  # on average; the floor rolls a row up and down
 SILT = [(95, 86, 76), (82, 74, 66), (108, 98, 86), (88, 80, 74)]
 ROCKS = [(70, 66, 64), (60, 58, 60), (84, 76, 70)]
 
-# The vent: a chimney of rock (lit colors) with cracks glowing from inside
-VENT_PALETTE = {"K": (88, 72, 60), "D": (64, 54, 48)}
+# The vent: a tall chimney of rock and mineral crust with a smaller one
+# beside it, smoking from both mouths ("M"), veins ("O") glowing from inside
+VENT_PALETTE = {
+    "K": (88, 72, 60), "D": (64, 54, 48), "Y": (150, 115, 45), "R": (125, 62, 32),
+    "O": (130, 70, 30), "M": (130, 70, 30),
+}
 VENT = [
-    ".DKD..",
-    ".KKK..",
-    ".KDK..",
-    "KKKKD.",
-    ".DKKK.",
-    ".KKDK.",
-    "KKKKKD",
-    "DKKKKK",
+    "...DMD.......",
+    "...KOK.......",
+    "..DKOKD......",
+    "..KYKOK......",
+    "..KKOKD......",
+    ".DKOKKK......",
+    ".KKKYOK......",
+    ".KRKOKKD.DMD.",
+    "DKKOKKYK.KOK.",
+    "KKKKOKKKDKOKD",
+    "KYKOKKRKKOKKK",
+    "KKOKKKKKOKKYK",
+    "DKKKKOKKKKKKD",
+    "KKRKKKKOKKRKK",
 ]
-VENT_CRACKS = [(2, 2), (2, 5), (1, 3), (4, 6)]  # glowing, in chimney coordinates
-VENT_MOUTH = (2, 0)
-VENT_HOT = (255, 120, 20)
-VENT_GLOW = (60, 20, 2)  # added to the water by the vent's glow at full strength
+VENT_DEEP = (110, 20, 0)  # a vein between pulses of heat, which climb it
+VENT_HOT = (255, 140, 30)
+VENT_MOUTH = (255, 210, 110)
+VENT_GLOW = (80, 28, 4)  # added to the water by the vent's glow at full strength
 VENT_TINT = (1.0, 0.75, 0.5)  # its light is warm
-VENT_REACH = 7.0  # the glow's radius (one sigma), in pixels
-SMOKE_HOT = (170, 80, 20)  # smoke leaves the vent glowing and cools as it rises
-SMOKE_COOL = (34, 28, 28)
+VENT_REACH = 10.0  # the glow's radius (one sigma), in pixels
+VENT_SURGE_SECONDS = (10.0, 25.0)  # between surges, when it flares and belches smoke
+SMOKE = [  # by age: leaving the mouth glowing, lit by the vent, cooling grey
+    (0.0, (230, 110, 25)), (0.12, (110, 55, 25)), (0.4, (40, 32, 30)), (1.0, (0, 0, 0)),
+]
+SMOKE_SECONDS = (5.0, 8.0)
 
-TUBE = (175, 170, 160)
+TUBE = (140, 132, 118)
 PLUME = (215, 25, 35)
 
 SNOW_FLAKES = 28
@@ -75,8 +89,8 @@ SPARK = (40, 210, 170)
 
 CREATURES = {
     "anglerfish": dict(
-        palette={"B": (120, 88, 72), "D": (88, 64, 54), "W": ((240, 235, 215), (80, 78, 70)),
-                 "M": ((90, 20, 24), (18, 4, 5)), "E": ((230, 225, 200), (60, 58, 52)), "S": (110, 90, 70),
+        palette={"B": (120, 88, 72), "D": (88, 64, 54), "W": ((240, 235, 215), (40, 38, 34)),
+                 "M": ((90, 20, 24), (18, 4, 5)), "E": ((230, 225, 200), (30, 29, 26)), "S": (110, 90, 70),
                  "F": (100, 74, 62)},
         glows={"L": (120, 255, 200)},
         lamps="L",
@@ -165,28 +179,6 @@ CREATURES = {
             ],
         ],
     ),
-    "dumbo": dict(
-        palette={"P": (235, 150, 165), "Q": (200, 115, 135), "K": ((25, 10, 15), (6, 2, 3)),
-                 "A": (215, 130, 150), "a": (170, 95, 115)},
-        frames=[
-            [
-                "Q..PPP..Q",
-                ".QPPPPPQ.",
-                "..PKPKP..",
-                "..PPPPP..",
-                ".AAAAAAA.",
-                "a.a.a.a.a",
-            ],
-            [
-                "...PPP...",
-                "..PPPPP..",
-                "QQPKPKPQQ",
-                ".QPPPPPQ.",
-                "..AAAAA..",
-                ".a.a.a.a.",
-            ],
-        ],
-    ),
 }
 
 # (creature, how many, cruising speeds, how high it keeps from 0 the surface
@@ -195,10 +187,18 @@ TANK = [
     ("anglerfish", 1, (0.03, 0.06), (0.3, 1.0)),
     ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8)),
     ("viperfish", 1, (0.08, 0.14), (0.1, 0.8)),
-    ("dumbo", 1, (0.03, 0.05), (0.55, 1.0)),
 ]
-# The hatchetfish keep together, each in its place relative to the leader
-SCHOOL = ("hatchetfish", (0.1, 0.16), (0.0, 0.75), [(-9, 3), (8, -2)])
+# The hatchetfish keep together, the second in its place relative to the
+# leader
+SCHOOL = ("hatchetfish", (0.1, 0.16), (0.0, 0.75), [(-8, 3)])
+
+# The creatures take turns: ON_SCREEN of them (a school counts each fish) are
+# in view at once, the number changing every CROWD_SECONDS. Each stays for
+# VISIT_SECONDS, then swims off to make room for another.
+ON_SCREEN = (1, 3)
+CROWD_SECONDS = (20.0, 45.0)
+VISIT_SECONDS = (25.0, 60.0)
+ENTRY_SECONDS = (3.0, 8.0)  # at least this long between arrivals
 
 # --- Events --------------------------------------------------------------------
 
@@ -305,8 +305,9 @@ class Glower:
 
 
 class Critter(Fish):
-    """A deep-sea fish (or octopus): a Fish whose lights can be turned down,
-    flashed, and (for a lure) pulse."""
+    """A deep-sea fish: a Fish whose lights can be turned down, flashed, and
+    (for a lure) pulse, and which visits the panel for a while at a time
+    (see NightTank.cast)."""
 
     def __init__(self, kind: str, *args, **kwargs) -> None:
         spec = CREATURES[kind]
@@ -318,6 +319,28 @@ class Critter(Fish):
         self.flash = 0.0  # extra brightness from a startle, fading
         self.pulse = 0.35 if spec.get("lamps") else 0.0
         self.pulse_phase = random.uniform(0, 2 * math.pi)
+        self.away = False  # out of view, waiting its turn
+        self.leaving = False  # swimming off the panel
+        self.visit = 0  # frames left before it leaves
+
+    def pick_turn(self) -> None:
+        # Its visits decide when it leaves the panel, so it turns back at the
+        # glass rather than wandering out of view
+        super().pick_turn()
+        glass = self.glass(self.facing)
+        if (self.turn_x - glass) * self.facing > 0:
+            self.turn_x = glass
+
+    def wander(self) -> None:
+        if not self.leaving:
+            super().wander()
+            return
+        # Off the panel at an easy pace, then out of the picture
+        self.glide()
+        self.speed += (self.cruise * self.pace - self.speed) * 0.05
+        if (self.turn_x - self.x) * self.facing <= 0:
+            self.leaving = False
+            self.away = True
 
     def swim(self) -> None:
         super().swim()
@@ -339,7 +362,7 @@ class Flake:
 
 
 class Puff:
-    __slots__ = ("x", "y", "vx", "age", "life")
+    __slots__ = ("x", "y", "vx", "vy", "age", "life")
 
 
 class Spark:
@@ -348,6 +371,14 @@ class Spark:
 
 class Worm:
     __slots__ = ("x", "base", "length", "phase", "out", "hide")
+
+
+def smoke_color(age: float) -> tuple:
+    """The smoke's color at age (0 leaving the vent, 1 gone), from SMOKE."""
+    for (a0, c0), (a1, c1) in zip(SMOKE, SMOKE[1:]):
+        if age <= a1:
+            return mix(c0, c1, (age - a0) / (a1 - a0))
+    return SMOKE[-1][1]
 
 
 def glow_kernel(radius: float) -> np.ndarray:
@@ -732,32 +763,44 @@ class NightTank(Tank):
         ]
         self.floor = floor = min(self.floor_top)
 
-        # The vent toward one side, its base sunk into the floor
-        vent_w, vent_h = len(VENT[0]), len(VENT)
-        self.vent_x = round(width * random.uniform(0.15, 0.3))
+        # The vent toward one side (mirrored at random), its base sunk into
+        # the floor; its veins and mouths glow, in panel coordinates
+        rows = VENT if random.random() < 0.5 else flip(VENT)
+        vent_w, vent_h = len(rows[0]), len(rows)
+        self.vent_x = round(width * random.uniform(0.12, 0.25))
         if random.random() < 0.5:
             self.vent_x = width - vent_w - self.vent_x
-        self.vent_y = max(self.floor_top[self.vent_x:self.vent_x + vent_w]) - vent_h + 1
-        mouth_x, mouth_y = self.vent_x + VENT_MOUTH[0], self.vent_y + VENT_MOUTH[1]
-        self.mouth = (mouth_x, mouth_y)
+        self.vent_y = max(self.floor_top[max(self.vent_x, 0):self.vent_x + vent_w]) - vent_h + 1
+        self.vent_rows = rows
+        self.veins = [(self.vent_x + dx, self.vent_y + dy) for dy, row in enumerate(rows)
+                      for dx, ch in enumerate(row) if ch == "O"]
+        # The main mouth first: it smokes the most
+        self.mouths = sorted(((self.vent_x + dx, self.vent_y + dy) for dy, row in enumerate(rows)
+                              for dx, ch in enumerate(row) if ch == "M"), key=lambda m: m[1])
+        self.surge = 0.0  # how hard it's surging, 0-1
+        self.surging = 0  # frames left building a surge
+        self.surge_wait = frames_for(random.uniform(*VENT_SURGE_SECONDS))
 
-        # The vent's glow, centered a little above its base
+        # The vent's glow, centered on the main chimney a little below its
+        # mouth
         yy = np.arange(height, dtype=np.float32)[:, None]
         xx = np.arange(width, dtype=np.float32)[None, :]
-        glow_y = self.vent_y + vent_h * 0.55
-        self.vent_light = (0.95 * np.exp(-((xx - mouth_x) ** 2 + (yy - glow_y) ** 2) / (2 * VENT_REACH ** 2))
-                           ).astype(np.float32)
+        glow_x, glow_y = self.mouths[0][0], self.vent_y + vent_h * 0.45
+        self.vent_light = np.exp(-((xx - glow_x) ** 2 + (yy - glow_y) ** 2) / (2 * VENT_REACH ** 2)).astype(np.float32)
         self.dark_bg, self.lit_bg = self.render_background()
         self.background = self.dark_bg.astype(np.uint8).tobytes()
+        # A surge brightens the water around the vent this much more
+        self.surge_glow = (np.array(VENT_GLOW, np.float32) * self.vent_light[..., None] ** 2).astype(np.float32)
 
-        # Tube worms clustered around the vent
+        # A bed of tube worms around the vent, taller close to it
         self.worms = []
-        spots = [x for x in range(self.vent_x - 7, self.vent_x + vent_w + 7)
+        spots = [x for x in range(self.vent_x - 9, self.vent_x + vent_w + 9)
                  if 0 <= x < width and not self.vent_x - 1 <= x <= self.vent_x + vent_w]
-        for x in random.sample(spots, min(len(spots), 7)):
+        for x in random.sample(spots, min(len(spots), 12)):
             w = Worm()
             w.x, w.base = x, self.floor_top[x] - 1
-            w.length = random.randint(2, 4)
+            near = min(abs(x - self.vent_x), abs(x - self.vent_x - vent_w))
+            w.length = random.randint(2, 3) + (2 if near < 4 else 1 if near < 7 else 0)
             w.phase = random.uniform(0, 2 * math.pi)
             w.out, w.hide = 1.0, 0
             self.worms.append(w)
@@ -777,6 +820,20 @@ class NightTank(Tank):
             self.fish += school(make, SCHOOL[3]) if kind == SCHOOL[0] else [make()]
         self.fish.sort(key=lambda fish: -fish.depth)
 
+        # A few start in view, the rest waiting their turns
+        self.size = {id(f): 1 + sum(g.leader is f for g in self.fish) for f in self.fish if not f.leader}
+        self.crowd = random.randint(*ON_SCREEN)
+        self.crowd_wait = frames_for(random.uniform(*CROWD_SECONDS))
+        self.entry_wait = frames_for(random.uniform(*ENTRY_SECONDS))
+        self.last_gone = None
+        room = self.crowd
+        for f in random.sample(self.units(), len(self.size)):
+            if self.size[id(f)] <= room:
+                room -= self.size[id(f)]
+                f.visit = frames_for(random.uniform(*VISIT_SECONDS) * random.uniform(0.3, 1))
+            else:
+                f.away = True
+
         self.flakes = []
         for _ in range(SNOW_FLAKES):
             f = Flake()
@@ -790,6 +847,80 @@ class NightTank(Tank):
         self.frame_count = 0
         self.init_events()
 
+    def units(self) -> list[Critter]:
+        """The creatures that go their own way (with their schools)."""
+        return [f for f in self.fish if not f.leader]
+
+    def in_view(self, fish: Critter) -> bool:
+        return not (fish.leader or fish).away
+
+    def cast(self) -> None:
+        """Keep a few creatures in view: send one off when its visit is up or
+        the panel's too crowded, and bring another in when there's room."""
+        self.crowd_wait -= 1
+        if self.crowd_wait <= 0:
+            self.crowd = random.randint(*ON_SCREEN)
+            self.crowd_wait = frames_for(random.uniform(*CROWD_SECONDS))
+        units = self.units()
+        present = 0  # counting those still on their way out
+        staying = []
+        for u in units:
+            if u.away:
+                continue
+            present += self.size[id(u)]
+            if not u.leaving:
+                u.visit -= 1
+                if u.visit <= 0:
+                    self.leave(u)
+                else:
+                    staying.append(u)
+        if sum(self.size[id(u)] for u in staying) > self.crowd:
+            self.leave(min(staying, key=lambda u: u.visit))
+        self.entry_wait -= 1
+        if self.entry_wait <= 0:
+            waiting = [u for u in units if u.away and self.size[id(u)] <= self.crowd - present]
+            # Someone other than the last to leave, if there's a choice
+            if len(waiting) > 1 and self.last_gone in waiting:
+                waiting.remove(self.last_gone)
+            if waiting:
+                self.arrive(random.choice(waiting))
+                self.entry_wait = frames_for(random.uniform(*ENTRY_SECONDS))
+
+    def leave(self, fish: Critter) -> None:
+        """Send a creature (and its school) off the nearer side of the panel."""
+        fish.leaving = True
+        fish.pause = 0
+        fish.facing = 1 if fish.x + fish.w / 2 >= self.width / 2 else -1
+        if fish.facing > 0:
+            fish.turn_x = self.width + fish.spread[0] + 3
+        else:
+            fish.turn_x = -fish.w - fish.spread[1] - 3
+        self.last_gone = fish
+
+    def arrive(self, fish: Critter) -> None:
+        """Bring a creature (and its school) in from one side for a visit."""
+        fish.away = False
+        fish.visit = frames_for(random.uniform(*VISIT_SECONDS))
+        fish.facing = random.choice((1, -1))
+        fish.x = -fish.w - fish.spread[1] - 2.0 if fish.facing > 0 else self.width + fish.spread[0] + 2.0
+        fish.y = fish.target_y = random.uniform(fish.top, fish.bottom)
+        fish.vy = 0.0
+        fish.speed = fish.cruise
+        fish.pick_turn()
+        for f in self.fish:
+            if f.leader is fish:
+                f.x, f.facing, f.speed, f.vy = fish.x + f.place[0], fish.facing, fish.cruise, 0.0
+                f.y = min(max(fish.y + f.place[1], f.top), f.bottom)
+
+    def give_room(self) -> None:
+        # Only among those in view
+        everyone = self.fish
+        self.fish = [f for f in everyone if self.in_view(f)]
+        try:
+            super().give_room()
+        finally:
+            self.fish = everyone
+
     def render_background(self) -> tuple[np.ndarray, np.ndarray]:
         """The water, floor and vent, unlit (but for the vent's own glow) and
         fully lit, as (height, width, 3) float32."""
@@ -800,22 +931,26 @@ class NightTank(Tank):
         water = np.broadcast_to(water, (height, width, 3))
         lit = np.broadcast_to(np.array(WATER_LIT, np.float32), (height, width, 3)).copy()
         solid = np.zeros((height, width), bool)
+        chimney = np.zeros((height, width), bool)
         for x, top in enumerate(self.floor_top):
             for sy in range(top, height):
                 color = random.choice(ROCKS) if random.random() < 0.08 else random.choice(SILT)
                 lit[sy, x] = [c * (1 - 0.1 * (sy - top)) for c in color]
                 solid[sy, x] = True
-        for dy, row in enumerate(VENT):
+        for dy, row in enumerate(self.vent_rows):
             for dx, ch in enumerate(row):
-                if ch != "." and 0 <= self.vent_x + dx < width:
-                    lit[self.vent_y + dy, self.vent_x + dx] = VENT_PALETTE[ch]
-                    solid[self.vent_y + dy, self.vent_x + dx] = True
+                x, y = self.vent_x + dx, self.vent_y + dy
+                if ch != "." and 0 <= x < width and 0 <= y < height:
+                    lit[y, x] = VENT_PALETTE[ch]
+                    solid[y, x] = chimney[y, x] = True
         dark = np.where(solid[..., None], lit * DIM, water)
         # The vent's warm glow on the floor and in the water around it
         glow = self.vent_light[..., None]
         warm = lit * np.array(VENT_TINT, np.float32)
         dark = np.where(solid[..., None], dark + (warm - dark) * glow,
                         dark + np.array(VENT_GLOW, np.float32) * glow ** 2)
+        # The chimney stands dark against its own glow, lit only at the edges
+        dark = np.where(chimney[..., None], lit * (DIM + 0.25 * self.vent_light[..., None] ** 3), dark)
         return np.minimum(dark, 255), np.minimum(lit, 255)
 
     def respawn(self, f: Flake) -> None:
@@ -832,26 +967,41 @@ class NightTank(Tank):
         self.direct()
         event = self.event
 
-        for fish in self.fish:
+        self.cast()
+        shown = [fish for fish in self.fish if self.in_view(fish)]
+        for fish in shown:
             fish.swim()
         if self.frame_count % 4 == 0:
             self.give_room()
 
+        # Every so often the vent surges: it flares and belches smoke
+        self.surge_wait -= 1
+        if self.surge_wait <= 0:
+            self.surge_wait = frames_for(random.uniform(*VENT_SURGE_SECONDS))
+            self.surging = frames_for(random.uniform(1.5, 3.0))
+        if self.surging:
+            self.surging -= 1
+            self.surge += (1 - self.surge) * 0.12
+        else:
+            self.surge *= 0.97
+        surge = self.surge
+
         # What light there is: the vent's flickering glow, the lures, and any
         # an event brings
-        flicker = 0.85 + 0.1 * math.sin(t * 1.7) + 0.05 * math.sin(t * 5.3)
+        flicker = (0.85 + 0.1 * math.sin(t * 1.7) + 0.05 * math.sin(t * 5.3)) * (1 + 0.35 * surge)
         light = self.vent_light * flicker
-        for fish in self.fish:
+        for fish in shown:
             if fish.sprite.lamps[0][0]:
                 for lx, ly in fish.lamps(t):
                     add_light(light, lx, ly, self.lure_kernel, 0.6 * min(fish.level(t), 1.2))
         extra = event.light() if event is not None and hasattr(event, "light") else None
+        bg = None
         if extra is not None:
             light = light + extra
             bg = self.dark_bg + (self.lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
-            fb = bytearray(bg.astype(np.uint8).tobytes())
-        else:
-            fb = bytearray(self.background)
+        if surge > 0.02:
+            bg = (self.dark_bg if bg is None else bg) + self.surge_glow * surge
+        fb = bytearray(self.background if bg is None else np.minimum(bg, 255).astype(np.uint8).tobytes())
         self.light = light
         light_rows = light.tolist()
 
@@ -872,31 +1022,43 @@ class NightTank(Tank):
                 b = f.bright + int(200 * level * level)
                 put_max(fb, width, height, px, py, (b, b, min(255, b + 8)))
 
-        # Smoke billowing from the vent, glowing as it leaves and cooling
-        if random.random() < 0.5:
-            p = Puff()
-            p.x, p.y = self.mouth[0] + random.uniform(-0.5, 0.5), self.mouth[1] - 0.5
-            p.vx, p.age, p.life = random.uniform(-0.03, 0.03), 0, frames_for(random.uniform(3, 6))
-            self.puffs.append(p)
+        # Smoke billowing from the mouths, glowing as it leaves, lit by the
+        # vent as it rises, cooling grey and spreading as it climbs
+        for k, (mx, my) in enumerate(self.mouths):
+            rate = (0.7 + 2.5 * surge) if k == 0 else (0.25 + 0.8 * surge)
+            while rate > 0:
+                if random.random() < rate:
+                    p = Puff()
+                    p.x, p.y = mx + random.uniform(-0.5, 0.5), my - 0.5
+                    p.vx, p.vy = random.uniform(-0.03, 0.03), -random.uniform(0.11, 0.16) * (1 + 0.6 * surge)
+                    p.age, p.life = 0, frames_for(random.uniform(*SMOKE_SECONDS))
+                    self.puffs.append(p)
+                rate -= 1
+        current = 0.006 * math.sin(t * 0.04)  # the plume leans with a slow current
         puffs = []
         for p in self.puffs:
             p.age += 1
-            if p.age >= p.life:
+            if p.age >= p.life or p.y < -1:
                 continue
             puffs.append(p)
-            p.vx += random.uniform(-0.006, 0.006)
+            p.vx += random.uniform(-0.008, 0.008) + current * 0.05
             p.x += p.vx
-            p.y -= 0.11
-            age = p.age / p.life
-            color = mix(SMOKE_HOT, SMOKE_COOL, min(1.0, age * 4)) if age < 0.25 else scale(SMOKE_COOL, (1 - age) / 0.75)
-            put_max(fb, width, height, round(p.x), round(p.y), color)
+            p.y += p.vy
+            p.vy *= 0.997
+            color = smoke_color(p.age / p.life)
+            px, py = round(p.x), round(p.y)
+            put_max(fb, width, height, px, py, color)
+            if p.age > p.life * 0.3:
+                put_max(fb, width, height, px + 1, py, scale(color, 0.6))
         self.puffs = puffs
 
-        # The vent's mouth and cracks glowing from within
-        put(fb, width, height, *self.mouth, scale(mix(VENT_HOT, (255, 220, 120), 0.4), flicker))
-        for k, (dx, dy) in enumerate(VENT_CRACKS):
-            put(fb, width, height, self.vent_x + dx, self.vent_y + dy,
-                scale(VENT_HOT, 0.45 + 0.3 * math.sin(t * (1.1 + k * 0.4) + k)))
+        # The mouths and veins glowing from within, pulses of heat climbing
+        # the veins
+        for mx, my in self.mouths:
+            put(fb, width, height, mx, my, scale(VENT_MOUTH, min(1.0, flicker)))
+        for vx, vy in self.veins:
+            pulse = max(0.0, math.sin(t * 2.2 + (vy - self.vent_y) * 0.7 + vx * 0.3)) ** 3
+            put(fb, width, height, vx, vy, mix(VENT_DEEP, VENT_HOT, min(1.0, 0.1 + 0.9 * pulse + 0.5 * surge)))
 
         # Tube worms, their plumes swaying, snatched in when startled
         for w in self.worms:
@@ -905,12 +1067,15 @@ class NightTank(Tank):
                 w.out = max(0.0, w.out - 0.25)
             else:
                 w.out = min(1.0, w.out + 0.02)
+            # Lit by the vent, or a lamp; dim away from it
+            level = min(1.0, light_rows[min(max(w.base, 0), height - 1)][w.x])
+            tube_color = scale(TUBE, 0.15 + 0.85 * level)
             tube = w.length - (1 if w.out < 0.5 else 0)
             for k in range(tube):
-                put(fb, width, height, w.x, w.base - k, TUBE if k == tube - 1 else scale(TUBE, 0.6))
+                put(fb, width, height, w.x, w.base - k, tube_color if k == tube - 1 else scale(tube_color, 0.6))
             if w.out > 0.3:
                 sway = round(0.6 * math.sin(t * 0.8 + w.phase))
-                plume = scale(PLUME, w.out)
+                plume = scale(PLUME, w.out * (0.3 + 0.7 * level))
                 put(fb, width, height, w.x + sway, w.base - tube, plume)
                 if w.out > 0.8:
                     put(fb, width, height, w.x + sway - 1, w.base - tube, scale(plume, 0.6))
@@ -932,7 +1097,7 @@ class NightTank(Tank):
         self.sparks = sparks
 
         among = event if event and event.layer == AMONG else None
-        for fish in self.fish:
+        for fish in shown:
             if among and among.depth > fish.depth:
                 among.draw(fb, t)
                 among = None
