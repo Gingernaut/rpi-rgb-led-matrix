@@ -350,70 +350,82 @@ COMB_SPEED = (0.06, 0.09)
 
 STARTLE_SPEED = 0.45  # how fast the wave of sparks spreads, pixels a frame
 
-# The anglerfish's catch: a bristlemouth, all but invisible until the lure
-# lights it, edging in to look
+# The anglerfish's catch: a bristlemouth, a dark little shape behind a row
+# of blue lights until the lure's glow turns it silver, edging in to look
 PREY = dict(
-    palette={"B": ((150, 165, 180), (8, 9, 11)), "D": ((95, 105, 125), (5, 6, 8)),
-             "E": ((230, 240, 250), (10, 10, 12)), "T": ((110, 120, 140), (6, 6, 8))},
-    glows={"g": (18, 40, 70)},
+    palette={"B": ((185, 200, 215), (24, 28, 38)), "D": ((125, 140, 160), (18, 21, 30)),
+             "E": ((245, 250, 255), (40, 44, 52)), "T": ((135, 150, 170), (18, 21, 30))},
+    glows={"g": (35, 105, 230)},
     frames=[
-        ["..DD.", "TBBBE", "..gg."],
-        ["T.DD.", ".BBBE", "T.gg."],
+        ["..DDD.", "TBBBBE", "..ggg."],
+        ["T.DDD.", ".BBBBE", "T.ggg."],
     ],
 )
 PREY_SPEED = 0.1
 CATCH_SECONDS = 60.0  # the most it waits for its meal
 CATCH_ROOM = 18  # the open water it wants ahead of its lure
-CATCH_MOUTH = (10, 8)  # where it swallows, in the anglerfish's sprite coordinates
+CATCH_MOUTH = (10, 7)  # where it swallows, in the anglerfish's sprite coordinates
+CATCH_GAPE = 0.24  # seconds its jaws hang open before it lunges
 CATCH_LUNGE = 0.55  # how fast it lunges, pixels a frame
+CATCH_SUCK = 0.3  # how much of the way to the mouth the prey is drawn each frame
+CATCH_BURST = (60, 140, 255)  # the prey's lights, scattered as it's snapped up
+
+# Something crossing the panel (the dragonfish, the gulper) asks the
+# creatures in view to keep clear of it and this much of the water ahead
+CLEAR_AHEAD = 10
 
 # A black dragonfish: long, slender and black, fangs bared, a barbel dangling
 # from its chin to a glowing tip, and under its eye a red photophore that
 # lights the water ahead with a light nothing else down here can see
 DRAGON = dict(
-    palette={"B": ((72, 60, 86), (30, 25, 38)), "D": ((60, 50, 72), (38, 32, 48)),
-             "F": ((84, 68, 96), (40, 32, 48)), "E": ((170, 180, 190), (50, 52, 60)),
-             "W": ((235, 230, 215), (80, 78, 72)), "M": ((12, 6, 12), (4, 2, 4)),
-             "b": ((110, 96, 120), (44, 38, 52))},
-    glows={"R": (255, 35, 25), "P": (60, 130, 255), "g": (60, 44, 150), "L": (210, 235, 255)},
+    # A sheen along its back ("D") to show its outline, its dorsal and anal
+    # fins far back by the tail, a row of lights along its belly, and its
+    # jaws open on long fangs
+    palette={"B": ((80, 66, 96), (36, 30, 46)), "D": ((110, 94, 128), (54, 46, 68)),
+             "F": ((96, 78, 110), (46, 38, 58)), "E": ((190, 200, 210), (70, 72, 80)),
+             "W": ((240, 235, 220), (110, 106, 98)), "M": ((14, 6, 12), (6, 2, 6)),
+             "b": ((120, 104, 130), (52, 44, 62))},
+    glows={"R": (255, 35, 25), "P": (60, 130, 255), "g": (75, 55, 185), "L": (210, 235, 255)},
     frames=[
         [
-            "..................DD....",
-            "TT.F......BBBBBBBPBEBB..",
-            "TTFBBBBBBBBBBBBBBBBRBBMW",
-            "T..F.......g.g.g.g.BBWMW",
-            "...................b.W..",
-            "...................b....",
-            "..................b.....",
-            "..................L.....",
+            "...F..............DDD....",
+            "T.FFDDDDDDDDDDDDDDBPBEDD.",
+            "TTBBBBBBBBBBBBBBBBBBRBMMW",
+            "T.FF..g..g..g..g..bBBWMW.",
+            "...F...............b.....",
+            "...................b.....",
+            "..................b......",
+            "..................L......",
         ],
         [
-            "..................DD....",
-            "T..F......BBBBBBBPBEBB..",
-            ".TFBBBBBBBBBBBBBBBBRBBMW",
-            "TT.F.......g.g.g.g.BBWMW",
-            "...................b.W..",
-            "....................b...",
-            "...................b....",
-            "...................L....",
+            "..F...............DDD....",
+            "TFF.DDDDDDDDDDDDDDBPBEDD.",
+            ".TBBBBBBBBBBBBBBBBBBRBMMW",
+            "TF.F..g..g..g..g..bBBWMW.",
+            "..F................b.....",
+            "....................b....",
+            "...................b.....",
+            "...................L.....",
         ],
     ],
 )
-DRAGON_LAMP = (19, 2)  # the red photophore, in sprite coordinates
+DRAGON_LAMP = (20, 2)  # the red photophore, in sprite coordinates
+DRAGON_SNOUT = 4  # how far the jaws reach past the lamp; its beam starts beyond them
 DRAGON_SPEED = 0.1
 DRAGON_BEAM_LENGTH = 26
 DRAGON_TINT = (1.8, 0.15, 0.1)  # what its light makes of each channel
 
 # A gulper eel: a long whip of a body behind a head that's nearly all mouth,
 # a light glowing at its tail tip
-GULPER_LENGTH = 44  # the body behind the head, in pixels
+GULPER_LENGTH = 40  # the body behind the head, in pixels
 GULPER_JAW = 8  # the head, snout to the hinge of its jaws
 GULPER_POUCH = 9.0  # how far the lower jaw drops, fully open
 GULPER_BODY = (105, 78, 112)  # lit; unlit it shows at a little under half this
 GULPER_RIM = (190, 160, 180)  # its jaws' edges
-GULPER_MOUTH = (34, 14, 32)  # inside the pouch
+GULPER_MOUTH = (60, 24, 54)  # inside the pouch
+GULPER_STOP = (3, 8)  # where it stops to feed: its tail tip this far inside the glass
 GULPER_TAIL = (255, 70, 140)
-GULPER_SPEED = 0.12
+GULPER_SPEED = 0.16
 GULPER_SPECK = (110, 200, 255)  # the copepods it gulps
 
 
@@ -721,9 +733,12 @@ class Squid(Event):
         if self.clock >= self.period:
             self.clock = 0
             self.speed += SQUID_KICK
-            # The jet churns the water it leaves behind into sparks, all
+            # The jet blasts out of the funnel, under its head, in a spray of
+            # sparks streaming back among its arms, and churns up more all
             # down its arms and tentacles
-            for _ in range(22):
+            funnel = self.tip - (SQUID_HEAD + 1) * self.facing
+            self.tank.burst(funnel, self.y + 1, 16, 0.6, heading=0.0 if self.facing < 0 else math.pi, spread=0.3)
+            for _ in range(8):
                 back = random.uniform(SQUID_HEAD, SQUID_HEAD + SQUID_TENTACLES + 3)
                 self.tank.stir(self.tip - back * self.facing, self.y + random.uniform(-5, 5), 1)
         self.speed *= SQUID_DRAG
@@ -1104,19 +1119,22 @@ class Eruption(Event):
 
 class Catch(Event):
     """The anglerfish hangs still, its lure twitching, and something small
-    comes to look: a bristlemouth, unseen but for a few faint lights until
-    the lure's glow falls on it, edging closer, stopping, edging closer.
-    When it's near enough the jaws fly open, the anglerfish lunges and snaps
-    them shut on it, a few sparks swirl where it was, and the lure goes dim a
-    moment before it glows again."""
+    comes to look: a bristlemouth, a row of blue lights in the dark until
+    the lure's glow turns it silver, edging closer, stopping, edging closer.
+    When it's near enough the jaws fly open, the anglerfish lunges, the rush
+    of water sweeps the bristlemouth in, the jaws snap shut on it in a spray
+    of its scattered light, and the lure goes dim a moment before it glows
+    again. The other creatures keep out of the way."""
 
     depth = 0.5  # just behind the anglerfish, set once it's found
 
     def __init__(self, tank: "NightTank") -> None:
         super().__init__(tank)
         self.angler = next(f for f in tank.fish if isinstance(f, Angler))
+        self.kept = self.angler  # it stays in view till it's done (see NightTank.cast)
+        self.held: list[Critter] = []  # once it settles, it keeps its place and the others keep clear
         self.depth = self.angler.depth + 0.001
-        self.state = "come"  # come, settle, lure, strike, gulp, rest
+        self.state = "come"  # come, settle, lure, gape, strike, gulp, rest
         self.clock = 0  # frames in this state
         self.frame_count = 0
         self.prey = None
@@ -1168,10 +1186,10 @@ class Catch(Event):
                         tank.leave(min(staying, key=lambda u: u.visit))
                     return True
                 tank.arrive(a)
-            # Hurrying a little, it swims on into view, until there's open
+            # Hurrying, it swims on into view, until there's open
             # water ahead of it (or behind it, and it turns) for its meal to
             # come through; there it hangs still
-            a.pace = 2.5
+            a.pace = 4.0
             a.pause = 0
             if (a.x + a.w > width - 1) if a.facing > 0 else (a.x < 1):
                 a.turn()  # it was swimming out of view: back across
@@ -1182,6 +1200,8 @@ class Catch(Event):
                 elif self.room(-a.facing) >= CATCH_ROOM:
                     a.turn()
                     self.state, self.clock = "settle", 0
+                if self.state == "settle":
+                    self.held = [a]
         elif self.state == "settle":
             self.hold()
             if a.speed < 0.01 and self.clock > frames_for(1.5):
@@ -1199,11 +1219,11 @@ class Catch(Event):
             self.hold()
             p = self.prey
             lx, ly = self.lure()
-            # The lure twitches now and then
-            if random.random() < 0.03:
-                a.flash = max(a.flash, random.uniform(0.3, 0.6))
             head = p.x + (p.w if p.facing > 0 else -1)
             dx, dy = lx - head, ly - (p.y + 1)
+            # The lure twitches now and then, more eagerly as its meal nears
+            if random.random() < (0.03 if abs(dx) > 8 else 0.06):
+                a.flash = max(a.flash, random.uniform(0.3, 0.6))
             if p.wait:
                 p.wait -= 1
                 want = 0.0
@@ -1217,18 +1237,35 @@ class Catch(Event):
             p.y += max(-0.05, min(0.05, dy * 0.03))
             p.tail = (p.tail + 0.08 + p.speed * 0.8) % 2
             if math.hypot(dx, dy) < 2.2 or dx * p.facing < 0:
-                # Close enough: the jaws fly open
+                # Close enough: the jaws fly open, the lure flaring, and the
+                # bristlemouth freezes
                 a.jaw = Angler.GAPE
+                a.flash = 1.0
+                p.speed = 0.0
+                self.state, self.clock = "gape", 0
+        elif self.state == "gape":
+            self.hold()
+            if self.clock >= frames_for(CATCH_GAPE):
                 self.state, self.clock = "strike", 0
         elif self.state == "strike":
+            # It lunges, and the water rushing into its mouth sweeps the
+            # bristlemouth in with it, tumbling
             a.x += CATCH_LUNGE * a.facing
-            if self.clock == frames_for(0.25):
-                # Snapped up
-                x, y = a.pose(self.frame_count * FRAME_SECONDS)
-                mx = a.sprite.at(x, a.facing, CATCH_MOUTH)
-                tank.stir(mx + 2 * a.facing, y + CATCH_MOUTH[1] - 1, 10)
+            p = self.prey
+            x, y = a.pose(self.frame_count * FRAME_SECONDS)
+            mx, my = a.sprite.at(x, a.facing, CATCH_MOUTH), y + CATCH_MOUTH[1]
+            px, py = p.x + p.w / 2, p.y + 1.5
+            p.x += (mx - px) * CATCH_SUCK
+            p.y += (my - py) * CATCH_SUCK
+            p.tail = (p.tail + 0.5) % 2
+            if math.hypot(mx - px, my - py) < 1.5 or self.clock >= frames_for(0.4):
+                # Snapped up: its lights scatter out of the jaws as they
+                # clamp shut, and the lure goes dim
+                tank.burst(mx + a.facing, my - 1, 16, 0.4, CATCH_BURST, 0.0 if a.facing > 0 else math.pi, 1.5)
+                tank.stir(mx + a.facing, my - 1, 4)
                 self.prey = None
                 a.jaw = Angler.SHUT
+                a.flash = 0.0
                 a.glow_to = 0.2
                 self.state, self.clock = "gulp", 0
         elif self.state == "gulp":
@@ -1254,20 +1291,34 @@ class Catch(Event):
             a.visit = frames_for(random.uniform(8, 20))
             a.pick_turn()
 
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        # Once it's settled, the others keep out of the way of the
+        # anglerfish and the water ahead of its lure, where its meal comes
+        if not self.held:
+            return []
+        a = self.angler
+        lx, ly = self.lure()
+        far = lx + (CATCH_ROOM + 4) * a.facing
+        left, right = sorted((lx, far))
+        return [(a.x, a.y, a.x + a.w, a.y + a.h), (left, ly - 4, right, ly + 4)]
+
     def draw(self, fb: bytearray, t: float) -> None:
         p = self.prey
         if p is not None:
             light = self.tank.light
+            # Its lights twinkle as it comes
+            glow = 0.75 + 0.25 * math.sin(t * 5 + p.bob)
             self.prey_sprite.draw(fb, self.tank.width, self.tank.height, round(p.x), round(p.y), p.facing,
-                                  int(p.tail), light.tolist() if light is not None else None)
+                                  int(p.tail), light.tolist() if light is not None else None, glow)
 
 
 class Dragonfish(Event):
-    """A black dragonfish noses through, slow and nearly invisible, the
+    """A black dragonfish noses through, slow and dark against the dark, the
     barbel at its chin dangling a glowing lure. Under its eye a red
     photophore sweeps a searchlight through the water ahead, and whatever it
     falls on shows up red: a light only it can see, so nothing turns from it.
-    Partway across it stops a while, as if looking."""
+    Partway across it stops a while, as if looking. It keeps to the
+    clearest water it can, and the fish keep clear of it."""
 
     depth = 0.3
     tint = DRAGON_TINT
@@ -1279,7 +1330,8 @@ class Dragonfish(Event):
         lamp = self.sprite.at(0, self.facing, DRAGON_LAMP)
         # Far enough out that the beam slides into view ahead of it
         self.x = (-DRAGON_BEAM_LENGTH * 0.6 if self.facing > 0 else tank.width + DRAGON_BEAM_LENGTH * 0.6) - lamp
-        self.y0 = random.uniform(4, tank.floor - 14)
+        # At a depth clear of whoever's about, barbel and all
+        self.y0 = tank.lane(1, tank.floor - 11, 1, self.sprite.h + 1)
         self.stop_at = tank.width * random.uniform(0.35, 0.6)
         self.pause = frames_for(random.uniform(3.0, 6.0))
         self.speed = DRAGON_SPEED
@@ -1304,7 +1356,8 @@ class Dragonfish(Event):
         self.x += self.speed * self.facing
         self.tail = (self.tail + 0.04 + self.speed * 0.4) % 2
         tank.stir(self.sprite.at(self.x, self.facing, (0, 2)), self.y + 2, max(0.0, self.speed - WAKE_FROM) * WAKE_RATE)
-        # The red beam, sweeping slowly up and down, fading with distance
+        # The red beam, sweeping slowly up and down, fading with distance,
+        # and coming on past its jaws so it doesn't redden its own head
         lx = self.sprite.at(self.x, self.facing, DRAGON_LAMP) + 0.5
         ly = round(self.y) + DRAGON_LAMP[1] + 0.5
         ahead = (np.arange(width, dtype=np.float32) + 0.5 - lx) * self.facing
@@ -1312,7 +1365,8 @@ class Dragonfish(Event):
         off = np.arange(height, dtype=np.float32)[:, None] + 0.5 - ly - ahead * tilt
         spread = np.maximum(ahead * 0.28 + 0.7, 0.1)
         self.beam = (0.9 * np.clip(1.1 - np.abs(off) / spread, 0, 1)
-                     * np.clip(1 - ahead / DRAGON_BEAM_LENGTH, 0, 1) ** 1.3 * (ahead > 1)).astype(np.float32)
+                     * np.clip(1 - ahead / DRAGON_BEAM_LENGTH, 0, 1) ** 1.3
+                     * np.clip((ahead - DRAGON_SNOUT) / 3, 0, 1)).astype(np.float32)
         # Until it's gone out the other side
         return (self.x + self.sprite.w >= 0) if self.facing < 0 else (self.x <= width)
 
@@ -1320,7 +1374,13 @@ class Dragonfish(Event):
         return self.beam
 
     def obstacles(self) -> list[tuple[float, float, float, float]]:
-        return [(self.x - 1, self.y - 1, self.x + self.sprite.w + 1, self.y + 4)]
+        # The whole fish, barbel and all, and the water it's heading into
+        left, right = self.x - 1, self.x + self.sprite.w + 1
+        if self.facing > 0:
+            right += CLEAR_AHEAD
+        else:
+            left -= CLEAR_AHEAD
+        return [(left, self.y - 1, right, self.y + self.sprite.h)]
 
     def draw(self, fb: bytearray, t: float) -> None:
         tank = self.tank
@@ -1335,10 +1395,11 @@ class Dragonfish(Event):
 
 class Gulper(Event):
     """A gulper eel wriggles past: a long whip of a body, a light flickering
-    pink at its tail tip, and a head that's nearly all mouth. Partway across
-    it stops among a cloud of glowing copepods and opens its enormous mouth,
-    the lower jaw dropping into a great pouch, and the copepods are swept in
-    before it shuts and swims on. The fish keep clear."""
+    pink at its tail tip, and a head that's nearly all mouth. Once all of it
+    is in view it stops among a cloud of glowing copepods and opens its
+    enormous mouth, the lower jaw dropping into a great pouch, and the
+    copepods are swept in before it shuts and swims on. It keeps to the
+    clearest water it can, and the fish keep clear of it."""
 
     depth = 0.35
 
@@ -1347,10 +1408,22 @@ class Gulper(Event):
 
     def __init__(self, tank: "NightTank") -> None:
         super().__init__(tank)
-        self.facing = random.choice((1, -1))
+        # It stops with the whole of it in view, the light at its tail tip
+        # too. It comes at a depth, and from a side, that keep its body and
+        # the pouch it'll open there as clear as can be of whoever's about.
+        tail = GULPER_JAW + GULPER_LENGTH + random.uniform(*GULPER_STOP)
+        ends = {1: tail, -1: tank.width - 1 - tail}
+
+        def blocking(facing: int, y: float) -> float:
+            stop = ends[facing]
+            left, right = sorted((stop - (GULPER_JAW + 2) * facing, stop + 6 * facing))
+            return tank.blocking(y - 4, y + 4) + tank.crowding(left, y - 4, right, y + 3 + GULPER_POUCH)
+
+        self.facing, self.y0 = min(((f, float(y)) for f in (1, -1) for y in np.arange(5, tank.floor - 12)),
+                                   key=lambda fy: blocking(*fy))
         self.x = -1.0 if self.facing > 0 else tank.width + 1.0  # the snout
-        self.y0 = random.uniform(5, tank.floor - 15)
-        self.stop_at = tank.width * random.uniform(0.5, 0.7)
+        self.stop_at = ends[self.facing]
+        self.fade = 0.0  # the copepods' glow: coming on as they come into view, going as it leaves them
         self.state = "swim"  # swim, open, hold, shut, swim on
         self.clock = 0
         self.speed = GULPER_SPEED
@@ -1361,7 +1434,7 @@ class Gulper(Event):
 
     def at(self, i: float) -> float:
         """The y of the body's middle i pixels back from the hinge."""
-        sway = (0.2 + 2.2 * i / GULPER_LENGTH) * math.sin(self.phase - i * 0.28)
+        sway = (0.2 + 2.6 * i / GULPER_LENGTH) * math.sin(self.phase - i * 0.28)
         return self.y0 + sway
 
     def mouth(self) -> tuple[float, float]:
@@ -1373,12 +1446,12 @@ class Gulper(Event):
         self.frame_count += 1
         self.clock += 1
         if self.state == "swim":
-            if (self.x - self.stop_at) * self.facing >= -10 and not self.specks:
-                # A cloud of copepods drifting ahead of it
+            if (self.x - self.stop_at) * self.facing >= -24 and not self.specks:
+                # A cloud of copepods twinkling ahead of it
                 for _ in range(18):
                     s = Gulper.Speck()
-                    a, r = random.uniform(0, 2 * math.pi), random.uniform(0.5, 4.5)
-                    s.x = self.stop_at + 4 * self.facing + math.cos(a) * r
+                    a, r = random.uniform(0, 2 * math.pi), random.uniform(0.5, 4.0)
+                    s.x = self.stop_at + 1.5 * self.facing + math.cos(a) * r
                     s.y = self.y0 + 3 + math.sin(a) * r * 0.8
                     s.vx = s.vy = 0.0
                     s.phase = random.uniform(0, 2 * math.pi)
@@ -1390,7 +1463,7 @@ class Gulper(Event):
             if self.gape >= 1:
                 self.state, self.clock = "hold", 0
         elif self.state == "hold":
-            if self.clock > frames_for(2.5) or (not self.specks and self.clock > frames_for(1)):
+            if self.clock > frames_for(3) or (not self.specks and self.clock > frames_for(1.8)):
                 self.state, self.clock = "shut", 0
         elif self.state == "shut":
             self.gape = max(0.0, self.gape - 1 / frames_for(0.5))
@@ -1423,7 +1496,13 @@ class Gulper(Event):
             s.x += s.vx
             s.y += s.vy
             kept.append(s)
-        self.specks = kept if self.state != "swim on" or self.clock < frames_for(2) else []
+        if self.state == "swim on":
+            self.fade = max(0.0, self.fade - 1 / frames_for(1.5))
+            if not self.fade:
+                kept = []
+        elif kept:
+            self.fade = min(1.0, self.fade + 1 / frames_for(1.5))
+        self.specks = kept
 
         # Its tail lashes up a few sparks
         if moving:
@@ -1433,9 +1512,14 @@ class Gulper(Event):
         return (tail <= tank.width) if self.facing > 0 else (tail >= 0)
 
     def obstacles(self) -> list[tuple[float, float, float, float]]:
-        back = self.x - (GULPER_JAW + GULPER_LENGTH * 0.6) * self.facing
-        left, right = sorted((self.x, back))
-        return [(left - 1, self.y0 - 3, right + 1, self.y0 + 3 + GULPER_POUCH * self.gape)]
+        # Its body; its head, with room for the pouch it'll open and the
+        # copepods; and the water it's heading into
+        f = self.facing
+        back = self.x - (GULPER_JAW + GULPER_LENGTH + 1) * f
+        left, right = sorted((self.x + CLEAR_AHEAD * f, back))
+        head_left, head_right = sorted((self.x + CLEAR_AHEAD * f, self.x - (GULPER_JAW + 2) * f))
+        return [(left, self.y0 - 4, right, self.y0 + 4),
+                (head_left, self.y0 - 4, head_right, self.y0 + 3 + GULPER_POUCH)]
 
     def draw(self, fb: bytearray, t: float) -> None:
         tank = self.tank
@@ -1491,7 +1575,7 @@ class Gulper(Event):
 
         # The copepods, twinkling
         for s in self.specks:
-            b = 0.45 + 0.55 * max(0.0, math.sin(t * 4 + s.phase))
+            b = (0.45 + 0.55 * max(0.0, math.sin(t * 4 + s.phase))) * self.fade
             put_max(fb, width, height, round(s.x), round(s.y), scale(GULPER_SPECK, b))
 
 
@@ -1623,6 +1707,54 @@ class NightTank(Tank):
                 self.wake.append(s)
             amount -= 1
 
+    def burst(self, x: float, y: float, n: int, speed: float, color: tuple = SPARK,
+              heading: float | None = None, spread: float = math.pi) -> None:
+        """Throw n sparks of about color out from (x, y) at up to speed
+        pixels a frame: every way, or within spread of heading (radians, 0
+        to the right), slowing as they go."""
+        for _ in range(n):
+            a = random.uniform(-math.pi, math.pi) if heading is None else heading + random.uniform(-spread, spread)
+            v = speed * random.uniform(0.3, 1.0)
+            s = Spark()
+            s.x, s.y = x + random.uniform(-0.5, 0.5), y + random.uniform(-0.5, 0.5)
+            s.vx, s.vy = math.cos(a) * v, math.sin(a) * v
+            s.age, s.life = 0, random.randint(WAKE_LIFE[0] + 6, WAKE_LIFE[1] + 12)
+            s.color = scale(mix(color, (190, 240, 255), random.random() * 0.5), random.uniform(0.7, 1.0))
+            self.wake.append(s)
+
+    def crowding(self, left: float, top: float, right: float, bottom: float) -> float:
+        """How much of the box the creatures in view fill, where they are
+        and where they're headed (in square pixels, give or take)."""
+        total = 0.0
+        for f in self.fish:
+            if self.in_view(f):
+                w = min(right, f.x + f.w) - max(left, f.x)
+                h = min(bottom, max(f.y, f.target_y) + f.h + 1) - max(top, min(f.y, f.target_y) - 1)
+                if w > 0 and h > 0:
+                    total += w * h
+        return total
+
+    def blocking(self, top: float, bottom: float) -> float:
+        """How much a band across the panel from top to bottom would be in
+        the way: of the creatures in view, of any it would leave no room to
+        get out of its way, above or below, in the water they keep to, and
+        (a little) of the vent and its worms. With a little chance in it,
+        for an even choice among bands equally clear."""
+        blocking = self.crowding(0, top, self.width, bottom) + random.uniform(0, 2)
+        for f in self.fish:
+            if (self.in_view(f) and not f.leader
+                    and f.top + f.h + f.stack[1] + 2 > top and f.bottom - f.stack[0] - 2 < bottom):
+                blocking += 0.5 * f.w * f.h
+        vent_w = len(self.vent_rows[0]) + 4
+        return blocking + 0.5 * max(0.0, bottom - self.vent_y + 2) * vent_w
+
+    def lane(self, low: float, high: float, up: float, down: float) -> float:
+        """A y between low and high for something about to cross the panel
+        whose body reaches up above y and down below it, as clear as can be
+        (see blocking)."""
+        return min((float(y) for y in np.arange(low, high + 0.01, 1.0)),
+                   key=lambda y: self.blocking(y - up, y + down))
+
     def units(self) -> list[Critter]:
         """The creatures that go their own way (with their schools)."""
         return [f for f in self.fish if not f.leader]
@@ -1638,19 +1770,23 @@ class NightTank(Tank):
             self.crowd = random.randint(*ON_SCREEN)
             self.crowd_wait = frames_for(random.uniform(*CROWD_SECONDS))
         units = self.units()
+        kept = getattr(self.event, "kept", None)  # the one an event needs in view stays till it's over
         present = 0  # counting those still on their way out
+        pinned = 0
         staying = []
         for u in units:
             if u.away:
                 continue
             present += self.size[id(u)]
-            if not u.leaving and not u.fleeing:
+            if u is kept:
+                pinned += self.size[id(u)]
+            elif not u.leaving and not u.fleeing:
                 u.visit -= 1
                 if u.visit <= 0:
                     self.leave(u)
                 else:
                     staying.append(u)
-        if sum(self.size[id(u)] for u in staying) > self.crowd:
+        if staying and pinned + sum(self.size[id(u)] for u in staying) > self.crowd:
             self.leave(min(staying, key=lambda u: u.visit))
         self.entry_wait -= 1
         if self.entry_wait <= 0 and self.activity < 0.2:
@@ -1695,9 +1831,11 @@ class NightTank(Tank):
                 f.y = min(max(fish.y + f.place[1], f.top), f.bottom)
 
     def give_room(self) -> None:
-        # Only among those in view
+        # Only among those in view, and not one an event is holding in place
+        # (the anglerfish making its catch)
         everyone = self.fish
-        self.fish = [f for f in everyone if self.in_view(f)]
+        held = getattr(self.event, "held", ())
+        self.fish = [f for f in everyone if self.in_view(f) and f not in held]
         try:
             super().give_room()
         finally:
@@ -1911,6 +2049,8 @@ class NightTank(Tank):
                 wake.append(s)
                 s.x += s.vx
                 s.y += s.vy
+                s.vx *= 0.96
+                s.vy *= 0.96
                 put_max(fb, width, height, round(s.x), round(s.y), scale(s.color, (1 - s.age / s.life) ** 1.5))
         self.wake = wake
 
