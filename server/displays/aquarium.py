@@ -277,12 +277,13 @@ CUTTLE_SPEED = 0.08
 CUTTLE_DISPLAY_SECONDS = 2.8  # each display it shows while hovering
 CUTTLE_DISPLAYS = ["cloud", "zebra", "cloud", "flush", "mottle"]
 
-# A blue-spotted stingray, its disc seen from a little above
+# A grey stingray with bright blue spots, its disc seen from a little above,
+# grey so it stands out from the sand
 RAY_LENGTH = 14
 RAY_HALF = 2.6  # the disc's half-height
 RAY_TAIL = 11
-RAY_SKIN = (190, 150, 65)
-RAY_RIM = (120, 92, 40)  # its underside edge, in shadow
+RAY_SKIN = (140, 146, 158)
+RAY_RIM = (82, 88, 100)  # its underside edge, in shadow
 RAY_SPOT = (40, 150, 255)
 RAY_EYE = (25, 20, 10)
 RAY_SPEED = 0.16
@@ -1173,7 +1174,7 @@ class Cuttlefish(Event):
 
 
 class Stingray(Event):
-    """A blue-spotted stingray glides in low, the edges of its disc rippling,
+    """A grey, blue-spotted stingray glides in low, the edges of its disc rippling,
     and settles on the sand partway across. It flutters itself under,
     kicking up sand, and lies there a while with only its eyes showing,
     then lifts off in a puff of sand and glides away."""
@@ -1250,7 +1251,7 @@ class Stingray(Event):
         elif state == "bury":
             self.speed *= 0.9
             self.flap = 2.0
-            self.cover = min(0.85, self.cover + 0.85 / frames_for(2.0))
+            self.cover = min(0.6, self.cover + 0.6 / frames_for(2.0))  # grey still showing through
             if random.random() < 0.6:
                 self.kick(1, 0.6)
             self.timer -= 1

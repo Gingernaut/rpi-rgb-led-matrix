@@ -10,12 +10,16 @@ a time, each staying a while before swimming off.
 Light decides what's seen. Each creature has its true colors, which show only
 where something lights it (the vent's glow, a lure, a submersible's lamps), and
 a dim silhouette everywhere else; its photophores glow regardless. The
-background likewise has a lit version, revealed wherever light falls.
+background likewise has a lit version, revealed wherever light falls. And
+the water itself sparks where anything stirs it, so swimmers leave a faint
+wake of light, brighter the faster they go.
 
-Every minute or so something happens (see EVENTS): a giant squid jets past
-and the creatures put out their lights, a submersible's lamps sweep the dark,
-a siphonophore or a comb jelly drifts by, something unseen startles the
-water into a wave of sparks, or the vent erupts. AQUARIUM_EVENT=<name> shows just that one (see
+Every half minute or so something happens (see EVENTS): a giant squid jets
+past and the creatures put out their lights, a submersible's lamps sweep the
+dark, a siphonophore or a comb jelly drifts by, something unseen startles
+the water into a wave of sparks, the vent erupts, the anglerfish lures in a
+meal, a black dragonfish hunts by its red searchlight, or a gulper eel opens
+its enormous mouth. AQUARIUM_EVENT=<name> shows just that one (see
 aquarium_common):
 
     AQUARIUM_EVENT=squid uv run server/displays/preview.py aquarium-night --seconds 30
@@ -98,6 +102,11 @@ VAMPIRE_CLOUD = (50, 130, 255)  # the glowing specks a startled vampire squid pu
 
 SNOW_FLAKES = 28
 SPARK = (40, 210, 170)
+# Swimmers stir up sparks behind them: WAKE_RATE a frame for each pixel a
+# frame they swim faster than WAKE_FROM, each lasting WAKE_LIFE frames
+WAKE_RATE = 1.5
+WAKE_FROM = 0.05
+WAKE_LIFE = (10, 24)
 
 # --- Creatures -----------------------------------------------------------------
 #
@@ -146,6 +155,36 @@ CREATURES = {
                 "FFBBBBBBWMWM...",
                 "F.HBBBBBBBBW...",
                 "...HHHHHH......",
+            ],
+            # Making a catch (see Angler): jaws flung wide, teeth bristling...
+            [
+                ".........SSS...",
+                "........S...S..",
+                ".......S.....S.",
+                "....F.S..W...S.",
+                "...FF.S.BW...L.",
+                "F.DDDDSBBMW....",
+                "FFDBBBBEMMM....",
+                "FFBBBBBMMMMW...",
+                "FFBBBBBMMMM....",
+                "F.BBBBBBMMMW...",
+                "..HBBBBBBMMW...",
+                "...HHHHHHHW....",
+            ],
+            # ...then clamped shut on it, its belly full
+            [
+                ".........SSS...",
+                "........S...S..",
+                ".......S.....S.",
+                "....F.S......S.",
+                "...FF.S......L.",
+                "F.DDDDS........",
+                "FFDBBBBEBB.....",
+                "FFBBBBBBBBW....",
+                "FFBBBBBBWBWB...",
+                "F.BBBBBBBBB....",
+                "..HBBBBBBBBH...",
+                "...HHHHHHHH....",
             ],
         ],
     ),
@@ -311,6 +350,72 @@ COMB_SPEED = (0.06, 0.09)
 
 STARTLE_SPEED = 0.45  # how fast the wave of sparks spreads, pixels a frame
 
+# The anglerfish's catch: a bristlemouth, all but invisible until the lure
+# lights it, edging in to look
+PREY = dict(
+    palette={"B": ((150, 165, 180), (8, 9, 11)), "D": ((95, 105, 125), (5, 6, 8)),
+             "E": ((230, 240, 250), (10, 10, 12)), "T": ((110, 120, 140), (6, 6, 8))},
+    glows={"g": (18, 40, 70)},
+    frames=[
+        ["..DD.", "TBBBE", "..gg."],
+        ["T.DD.", ".BBBE", "T.gg."],
+    ],
+)
+PREY_SPEED = 0.1
+CATCH_SECONDS = 60.0  # the most it waits for its meal
+CATCH_ROOM = 18  # the open water it wants ahead of its lure
+CATCH_MOUTH = (10, 8)  # where it swallows, in the anglerfish's sprite coordinates
+CATCH_LUNGE = 0.55  # how fast it lunges, pixels a frame
+
+# A black dragonfish: long, slender and black, fangs bared, a barbel dangling
+# from its chin to a glowing tip, and under its eye a red photophore that
+# lights the water ahead with a light nothing else down here can see
+DRAGON = dict(
+    palette={"B": ((72, 60, 86), (30, 25, 38)), "D": ((60, 50, 72), (38, 32, 48)),
+             "F": ((84, 68, 96), (40, 32, 48)), "E": ((170, 180, 190), (50, 52, 60)),
+             "W": ((235, 230, 215), (80, 78, 72)), "M": ((12, 6, 12), (4, 2, 4)),
+             "b": ((110, 96, 120), (44, 38, 52))},
+    glows={"R": (255, 35, 25), "P": (60, 130, 255), "g": (60, 44, 150), "L": (210, 235, 255)},
+    frames=[
+        [
+            "..................DD....",
+            "TT.F......BBBBBBBPBEBB..",
+            "TTFBBBBBBBBBBBBBBBBRBBMW",
+            "T..F.......g.g.g.g.BBWMW",
+            "...................b.W..",
+            "...................b....",
+            "..................b.....",
+            "..................L.....",
+        ],
+        [
+            "..................DD....",
+            "T..F......BBBBBBBPBEBB..",
+            ".TFBBBBBBBBBBBBBBBBRBBMW",
+            "TT.F.......g.g.g.g.BBWMW",
+            "...................b.W..",
+            "....................b...",
+            "...................b....",
+            "...................L....",
+        ],
+    ],
+)
+DRAGON_LAMP = (19, 2)  # the red photophore, in sprite coordinates
+DRAGON_SPEED = 0.1
+DRAGON_BEAM_LENGTH = 26
+DRAGON_TINT = (1.8, 0.15, 0.1)  # what its light makes of each channel
+
+# A gulper eel: a long whip of a body behind a head that's nearly all mouth,
+# a light glowing at its tail tip
+GULPER_LENGTH = 44  # the body behind the head, in pixels
+GULPER_JAW = 8  # the head, snout to the hinge of its jaws
+GULPER_POUCH = 9.0  # how far the lower jaw drops, fully open
+GULPER_BODY = (105, 78, 112)  # lit; unlit it shows at a little under half this
+GULPER_RIM = (190, 160, 180)  # its jaws' edges
+GULPER_MOUTH = (34, 14, 32)  # inside the pouch
+GULPER_TAIL = (255, 70, 140)
+GULPER_SPEED = 0.12
+GULPER_SPECK = (110, 200, 255)  # the copepods it gulps
+
 
 class Glower:
     """A creature's sprite frames, each facing, as (dx, dy, unlit, lit) body
@@ -343,6 +448,8 @@ class Glower:
         self.w = len(frames[0][0])
         self.h = len(frames[0])
         self.frames = len(frames)
+
+    at = Sprite.at
 
     def draw(self, fb: bytearray, width: int, height: int, x: int, y: int, facing: int, frame: int,
              light: list | None = None, glow: float = 1.0) -> None:
@@ -513,6 +620,23 @@ class Crab(Critter):
         return round(self.x), round(self.y)
 
 
+class Angler(Critter):
+    """The anglerfish. Its tail beats through the first two frames; the
+    other two are for the catch event, which sets jaw to one of them while
+    it strikes."""
+
+    GAPE, SHUT = 2, 3
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.beats = 2
+        self.tail %= self.beats
+        self.jaw: int | None = None
+
+    def frame(self) -> int:
+        return int(self.tail) if self.jaw is None else self.jaw
+
+
 class Flake:
     __slots__ = ("x", "y", "speed", "drift", "bright")
 
@@ -597,8 +721,17 @@ class Squid(Event):
         if self.clock >= self.period:
             self.clock = 0
             self.speed += SQUID_KICK
+            # The jet churns the water it leaves behind into sparks, all
+            # down its arms and tentacles
+            for _ in range(22):
+                back = random.uniform(SQUID_HEAD, SQUID_HEAD + SQUID_TENTACLES + 3)
+                self.tank.stir(self.tip - back * self.facing, self.y + random.uniform(-5, 5), 1)
         self.speed *= SQUID_DRAG
         self.tip += self.speed * self.facing
+        # And as it goes it stirs up more around its body, the faster the more
+        back = random.uniform(2, SQUID_HEAD + SQUID_TENTACLES)
+        edge = random.uniform(4, 6) if back < SQUID_HEAD else random.uniform(0, 5)
+        self.tank.stir(self.tip - back * self.facing, self.y + random.choice((-1, 1)) * edge, self.speed * 4)
         tail = self.tip - (SQUID_HEAD + SQUID_TENTACLES) * self.facing
         return (tail <= self.tank.width) if self.facing > 0 else (tail >= 0)
 
@@ -969,6 +1102,399 @@ class Eruption(Event):
             put_max(fb, width, height, math.floor(e.x), math.floor(e.y), scale(color, 1 - age * age))
 
 
+class Catch(Event):
+    """The anglerfish hangs still, its lure twitching, and something small
+    comes to look: a bristlemouth, unseen but for a few faint lights until
+    the lure's glow falls on it, edging closer, stopping, edging closer.
+    When it's near enough the jaws fly open, the anglerfish lunges and snaps
+    them shut on it, a few sparks swirl where it was, and the lure goes dim a
+    moment before it glows again."""
+
+    depth = 0.5  # just behind the anglerfish, set once it's found
+
+    def __init__(self, tank: "NightTank") -> None:
+        super().__init__(tank)
+        self.angler = next(f for f in tank.fish if isinstance(f, Angler))
+        self.depth = self.angler.depth + 0.001
+        self.state = "come"  # come, settle, lure, strike, gulp, rest
+        self.clock = 0  # frames in this state
+        self.frame_count = 0
+        self.prey = None
+        self.prey_sprite = Glower(PREY["palette"], PREY["frames"], PREY["glows"])
+
+    def lure(self) -> tuple[float, float]:
+        a = self.angler
+        x, y = a.pose(self.frame_count * FRAME_SECONDS)
+        (lx, ly), = a.sprite.lamps[a.facing < 0][0]
+        return x + lx, y + ly
+
+    def room(self, facing: int) -> float:
+        """The open water ahead of the lure, facing that way: up to the
+        glass, or the vent if that's nearer."""
+        tank, a = self.tank, self.angler
+        lx, _ = self.lure()
+        if facing != a.facing:
+            lx = 2 * (a.x + a.w / 2) - lx  # where the lure would be, turned
+        vent = (tank.vent_x, tank.vent_x + len(tank.vent_rows[0]))
+        if facing > 0:
+            return max(0.0, vent[0] - lx) if vent[1] >= lx else tank.width - lx
+        return max(0.0, lx - vent[1]) if vent[0] <= lx else lx
+
+    def hold(self) -> None:
+        """Keep the anglerfish where it is, facing the way it faces."""
+        a = self.angler
+        a.pace = 0.0
+        a.pause = 0
+        a.turn_x = a.x + 40 * a.facing
+        a.target_y = a.y
+
+    def step(self) -> bool:
+        tank, a = self.tank, self.angler
+        self.frame_count += 1
+        self.clock += 1
+        a.visit = max(a.visit, frames_for(15))
+        a.leaving = False
+        if self.frame_count > frames_for(CATCH_SECONDS):
+            return False
+        width = tank.width
+
+        if self.state == "come":
+            if a.away:
+                # Make room for it if the panel's full, then bring it in
+                present = [u for u in tank.units() if not u.away]
+                if sum(tank.size[id(u)] for u in present) >= ON_SCREEN[1]:
+                    staying = [u for u in present if not u.leaving]
+                    if staying:
+                        tank.leave(min(staying, key=lambda u: u.visit))
+                    return True
+                tank.arrive(a)
+            # Hurrying a little, it swims on into view, until there's open
+            # water ahead of it (or behind it, and it turns) for its meal to
+            # come through; there it hangs still
+            a.pace = 2.5
+            a.pause = 0
+            if (a.x + a.w > width - 1) if a.facing > 0 else (a.x < 1):
+                a.turn()  # it was swimming out of view: back across
+            a.turn_x = a.x + 40 * a.facing
+            if 1 <= a.x and a.x + a.w <= width - 1:
+                if self.room(a.facing) >= CATCH_ROOM:
+                    self.state, self.clock = "settle", 0
+                elif self.room(-a.facing) >= CATCH_ROOM:
+                    a.turn()
+                    self.state, self.clock = "settle", 0
+        elif self.state == "settle":
+            self.hold()
+            if a.speed < 0.01 and self.clock > frames_for(1.5):
+                lx, ly = self.lure()
+                p = self.prey = Fish(self.prey_sprite, width, 1, tank.floor - 1, 0.0, (PREY_SPEED, PREY_SPEED))
+                p.facing = -a.facing
+                # Out in the dark ahead, where only its faint lights show
+                ahead = lx + random.uniform(CATCH_ROOM - 4, CATCH_ROOM + 6) * a.facing
+                p.x = min(ahead, width + 1.0) if a.facing > 0 else max(ahead - p.w, -p.w - 1.0)
+                p.y = min(max(ly - 1 + random.uniform(-4, 4), 1.0), tank.floor - 4.0)
+                p.speed = PREY_SPEED
+                p.wait = 0  # frames it hangs back, looking
+                self.state, self.clock = "lure", 0
+        elif self.state == "lure":
+            self.hold()
+            p = self.prey
+            lx, ly = self.lure()
+            # The lure twitches now and then
+            if random.random() < 0.03:
+                a.flash = max(a.flash, random.uniform(0.3, 0.6))
+            head = p.x + (p.w if p.facing > 0 else -1)
+            dx, dy = lx - head, ly - (p.y + 1)
+            if p.wait:
+                p.wait -= 1
+                want = 0.0
+            else:
+                want = PREY_SPEED * min(1.0, abs(dx) / 6 + 0.3)
+                # It stops to look, more often the closer it gets
+                if random.random() < (0.01 if abs(dx) > 12 else 0.025):
+                    p.wait = frames_for(random.uniform(0.6, 1.8))
+            p.speed += (want - p.speed) * 0.1
+            p.x += p.speed * p.facing
+            p.y += max(-0.05, min(0.05, dy * 0.03))
+            p.tail = (p.tail + 0.08 + p.speed * 0.8) % 2
+            if math.hypot(dx, dy) < 2.2 or dx * p.facing < 0:
+                # Close enough: the jaws fly open
+                a.jaw = Angler.GAPE
+                self.state, self.clock = "strike", 0
+        elif self.state == "strike":
+            a.x += CATCH_LUNGE * a.facing
+            if self.clock == frames_for(0.25):
+                # Snapped up
+                x, y = a.pose(self.frame_count * FRAME_SECONDS)
+                mx = a.sprite.at(x, a.facing, CATCH_MOUTH)
+                tank.stir(mx + 2 * a.facing, y + CATCH_MOUTH[1] - 1, 10)
+                self.prey = None
+                a.jaw = Angler.SHUT
+                a.glow_to = 0.2
+                self.state, self.clock = "gulp", 0
+        elif self.state == "gulp":
+            self.hold()
+            if self.clock == frames_for(1.2):
+                a.jaw = None
+            if self.clock > frames_for(1.8):
+                a.glow_to = 1.0
+                self.state, self.clock = "rest", 0
+        elif self.state == "rest":
+            self.hold()
+            if self.clock > frames_for(2.5):
+                return False
+        return True
+
+    def end(self) -> None:
+        a = self.angler
+        a.pace = 1.0
+        a.jaw = None
+        a.glow_to = 1.0
+        a.flash = 0.0
+        if not a.away:
+            a.visit = frames_for(random.uniform(8, 20))
+            a.pick_turn()
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        p = self.prey
+        if p is not None:
+            light = self.tank.light
+            self.prey_sprite.draw(fb, self.tank.width, self.tank.height, round(p.x), round(p.y), p.facing,
+                                  int(p.tail), light.tolist() if light is not None else None)
+
+
+class Dragonfish(Event):
+    """A black dragonfish noses through, slow and nearly invisible, the
+    barbel at its chin dangling a glowing lure. Under its eye a red
+    photophore sweeps a searchlight through the water ahead, and whatever it
+    falls on shows up red: a light only it can see, so nothing turns from it.
+    Partway across it stops a while, as if looking."""
+
+    depth = 0.3
+    tint = DRAGON_TINT
+
+    def __init__(self, tank: "NightTank") -> None:
+        super().__init__(tank)
+        self.sprite = Glower(DRAGON["palette"], DRAGON["frames"], DRAGON["glows"], lamps="L", dim=1.0)
+        self.facing = random.choice((1, -1))
+        lamp = self.sprite.at(0, self.facing, DRAGON_LAMP)
+        # Far enough out that the beam slides into view ahead of it
+        self.x = (-DRAGON_BEAM_LENGTH * 0.6 if self.facing > 0 else tank.width + DRAGON_BEAM_LENGTH * 0.6) - lamp
+        self.y0 = random.uniform(4, tank.floor - 14)
+        self.stop_at = tank.width * random.uniform(0.35, 0.6)
+        self.pause = frames_for(random.uniform(3.0, 6.0))
+        self.speed = DRAGON_SPEED
+        self.tail = 0.0
+        self.frame_count = 0
+        self.beam = np.zeros((tank.height, tank.width), np.float32)
+
+    @property
+    def y(self) -> float:
+        return self.y0 + 0.8 * math.sin(self.frame_count * FRAME_SECONDS * 0.35)
+
+    def step(self) -> bool:
+        tank = self.tank
+        width, height = tank.width, tank.height
+        self.frame_count += 1
+        middle = self.x + self.sprite.w / 2
+        if self.pause and (middle - self.stop_at) * self.facing >= 0:
+            self.pause -= 1
+            self.speed *= 0.95
+        else:
+            self.speed += (DRAGON_SPEED - self.speed) * 0.03
+        self.x += self.speed * self.facing
+        self.tail = (self.tail + 0.04 + self.speed * 0.4) % 2
+        tank.stir(self.sprite.at(self.x, self.facing, (0, 2)), self.y + 2, max(0.0, self.speed - WAKE_FROM) * WAKE_RATE)
+        # The red beam, sweeping slowly up and down, fading with distance
+        lx = self.sprite.at(self.x, self.facing, DRAGON_LAMP) + 0.5
+        ly = round(self.y) + DRAGON_LAMP[1] + 0.5
+        ahead = (np.arange(width, dtype=np.float32) + 0.5 - lx) * self.facing
+        tilt = 0.08 + 0.22 * math.sin(self.frame_count * FRAME_SECONDS * 0.5)
+        off = np.arange(height, dtype=np.float32)[:, None] + 0.5 - ly - ahead * tilt
+        spread = np.maximum(ahead * 0.28 + 0.7, 0.1)
+        self.beam = (0.9 * np.clip(1.1 - np.abs(off) / spread, 0, 1)
+                     * np.clip(1 - ahead / DRAGON_BEAM_LENGTH, 0, 1) ** 1.3 * (ahead > 1)).astype(np.float32)
+        # Until it's gone out the other side
+        return (self.x + self.sprite.w >= 0) if self.facing < 0 else (self.x <= width)
+
+    def light(self) -> np.ndarray:
+        return self.beam
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        return [(self.x - 1, self.y - 1, self.x + self.sprite.w + 1, self.y + 4)]
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        tank = self.tank
+        x, y = round(self.x), round(self.y)
+        light = tank.light.tolist() if tank.light is not None else None
+        self.sprite.draw(fb, tank.width, tank.height, x, y, self.facing, int(self.tail), light)
+        # A soft glow around the lure
+        for lx, ly in self.sprite.lamps[self.facing < 0][int(self.tail)]:
+            for hx, hy, strength in LURE_HALO:
+                put_max(fb, tank.width, tank.height, x + lx + hx, y + ly + hy, scale((60, 120, 200), strength * 0.6))
+
+
+class Gulper(Event):
+    """A gulper eel wriggles past: a long whip of a body, a light flickering
+    pink at its tail tip, and a head that's nearly all mouth. Partway across
+    it stops among a cloud of glowing copepods and opens its enormous mouth,
+    the lower jaw dropping into a great pouch, and the copepods are swept in
+    before it shuts and swims on. The fish keep clear."""
+
+    depth = 0.35
+
+    class Speck:
+        __slots__ = ("x", "y", "vx", "vy", "phase")
+
+    def __init__(self, tank: "NightTank") -> None:
+        super().__init__(tank)
+        self.facing = random.choice((1, -1))
+        self.x = -1.0 if self.facing > 0 else tank.width + 1.0  # the snout
+        self.y0 = random.uniform(5, tank.floor - 15)
+        self.stop_at = tank.width * random.uniform(0.5, 0.7)
+        self.state = "swim"  # swim, open, hold, shut, swim on
+        self.clock = 0
+        self.speed = GULPER_SPEED
+        self.gape = 0.0
+        self.phase = random.uniform(0, 2 * math.pi)
+        self.frame_count = 0
+        self.specks: list[Gulper.Speck] = []
+
+    def at(self, i: float) -> float:
+        """The y of the body's middle i pixels back from the hinge."""
+        sway = (0.2 + 2.2 * i / GULPER_LENGTH) * math.sin(self.phase - i * 0.28)
+        return self.y0 + sway
+
+    def mouth(self) -> tuple[float, float]:
+        """Where things go in: the middle of the open pouch."""
+        return self.x - GULPER_JAW * 0.45 * self.facing, self.y0 + 1 + GULPER_POUCH * self.gape * 0.4
+
+    def step(self) -> bool:
+        tank = self.tank
+        self.frame_count += 1
+        self.clock += 1
+        if self.state == "swim":
+            if (self.x - self.stop_at) * self.facing >= -10 and not self.specks:
+                # A cloud of copepods drifting ahead of it
+                for _ in range(18):
+                    s = Gulper.Speck()
+                    a, r = random.uniform(0, 2 * math.pi), random.uniform(0.5, 4.5)
+                    s.x = self.stop_at + 4 * self.facing + math.cos(a) * r
+                    s.y = self.y0 + 3 + math.sin(a) * r * 0.8
+                    s.vx = s.vy = 0.0
+                    s.phase = random.uniform(0, 2 * math.pi)
+                    self.specks.append(s)
+            if (self.x - self.stop_at) * self.facing >= 0:
+                self.state, self.clock = "open", 0
+        elif self.state == "open":
+            self.gape = min(1.0, self.gape + 1 / frames_for(1.3))
+            if self.gape >= 1:
+                self.state, self.clock = "hold", 0
+        elif self.state == "hold":
+            if self.clock > frames_for(2.5) or (not self.specks and self.clock > frames_for(1)):
+                self.state, self.clock = "shut", 0
+        elif self.state == "shut":
+            self.gape = max(0.0, self.gape - 1 / frames_for(0.5))
+            if not self.gape and self.clock > frames_for(1.5):
+                self.state, self.clock = "swim on", 0
+        moving = self.state in ("swim", "swim on")
+        want = GULPER_SPEED if moving else 0.0
+        if self.state == "swim" and self.specks:
+            want *= max(0.15, min(1.0, (self.stop_at - self.x) * self.facing / 10))
+        self.speed += (want - self.speed) * 0.05
+        self.x += self.speed * self.facing
+        self.phase += 0.04 + self.speed * 0.7
+
+        # The copepods drift, and an open mouth draws them in
+        mx, my = self.mouth()
+        kept = []
+        for s in self.specks:
+            if self.gape > 0.5:
+                dx, dy = mx - s.x, my - s.y
+                d = math.hypot(dx, dy)
+                if d < 2:
+                    continue  # swallowed
+                # Swept in, faster the wider it gapes
+                pull = 0.05 * self.gape * random.uniform(0.5, 1.0)
+                s.vx = s.vx * 0.82 + dx / d * pull
+                s.vy = s.vy * 0.82 + dy / d * pull
+            else:
+                s.vx = s.vx * 0.94 + random.uniform(-0.004, 0.004)
+                s.vy = s.vy * 0.94 + random.uniform(-0.004, 0.004)
+            s.x += s.vx
+            s.y += s.vy
+            kept.append(s)
+        self.specks = kept if self.state != "swim on" or self.clock < frames_for(2) else []
+
+        # Its tail lashes up a few sparks
+        if moving:
+            tip = self.x - (GULPER_JAW + GULPER_LENGTH) * self.facing
+            tank.stir(tip, self.at(GULPER_LENGTH), self.speed * 1.5)
+        tail = self.x - (GULPER_JAW + GULPER_LENGTH + 2) * self.facing
+        return (tail <= tank.width) if self.facing > 0 else (tail >= 0)
+
+    def obstacles(self) -> list[tuple[float, float, float, float]]:
+        back = self.x - (GULPER_JAW + GULPER_LENGTH * 0.6) * self.facing
+        left, right = sorted((self.x, back))
+        return [(left - 1, self.y0 - 3, right + 1, self.y0 + 3 + GULPER_POUCH * self.gape)]
+
+    def draw(self, fb: bytearray, t: float) -> None:
+        tank = self.tank
+        width, height = tank.width, tank.height
+        light = tank.light
+        f = self.facing
+
+        def lit(color: tuple, px: int, py: int) -> tuple:
+            # Unlit it's a dim shape; light brings out its color
+            level = min(1.0, float(light[py, px])) if light is not None and 0 <= px < width and 0 <= py < height else 0.0
+            return scale(color, 0.42 + 0.58 * level)
+
+        def dot(px: int, py: int, color: tuple) -> None:
+            put(fb, width, height, px, py, lit(color, px, py))
+
+        # The body, tail first, thinning to a whip
+        for i in range(GULPER_LENGTH, 0, -1):
+            px = math.floor(self.x - (GULPER_JAW + i - 1) * f)
+            py = math.floor(self.at(i) + 0.5)
+            dot(px, py, GULPER_BODY)
+            if i < GULPER_LENGTH * 0.35:
+                dot(px, py + 1, scale(GULPER_BODY, 0.75))
+        # The light at its tail tip, flickering
+        tip = math.floor(self.x - (GULPER_JAW + GULPER_LENGTH) * f)
+        ty = math.floor(self.at(GULPER_LENGTH) + 0.5)
+        bright = 0.55 + 0.45 * abs(math.sin(t * 7.3 + self.phase)) * random.uniform(0.7, 1.0)
+        put_max(fb, width, height, tip, ty, scale(GULPER_TAIL, bright))
+        for hx, hy, strength in LURE_HALO:
+            if abs(hx) + abs(hy) <= 2:
+                put_max(fb, width, height, tip + hx, ty + hy, scale(GULPER_TAIL, strength * bright * 0.7))
+
+        # The head: the upper jaw a straight edge from snout to hinge, the
+        # lower one dropping away from it as the mouth opens, the pouch
+        # between them bellying out
+        drop = GULPER_POUCH * self.gape
+        hy = self.y0 - 1
+        for c in range(GULPER_JAW + 1):
+            px = math.floor(self.x - c * f)
+            k = 1 - c / GULPER_JAW  # 1 at the snout, 0 at the hinge
+            upper = math.floor(hy - 0.6 * self.gape * k + 0.5)
+            lower = math.floor(self.y0 + 1 + drop * k ** 0.8 + 0.5)
+            belly = math.floor(self.y0 + 1 + drop * (math.sin(math.pi * (0.25 + 0.75 * k)) * 0.75 + 0.25 * k) + 0.5) \
+                if self.gape else lower
+            bottom = max(lower, belly)
+            for py in range(upper, bottom + 1):
+                edge = py == upper or py == bottom
+                color = GULPER_RIM if edge and self.gape > 0.05 else GULPER_BODY if edge or py <= upper + 1 else GULPER_MOUTH
+                if not self.gape:
+                    color = GULPER_BODY if py == upper else scale(GULPER_BODY, 0.8)
+                dot(px, py, color)
+        # A tiny eye at the snout
+        put(fb, width, height, math.floor(self.x - 1 * f), math.floor(hy - 0.6 * self.gape + 0.5) + 1, (150, 150, 160))
+
+        # The copepods, twinkling
+        for s in self.specks:
+            b = 0.45 + 0.55 * max(0.0, math.sin(t * 4 + s.phase))
+            put_max(fb, width, height, round(s.x), round(s.y), scale(GULPER_SPECK, b))
+
+
 # name: (event, weight when picking one at random)
 EVENTS = {
     "squid": (Squid, 3),
@@ -977,6 +1503,9 @@ EVENTS = {
     "comb-jelly": (CombJelly, 2),
     "startle": (Startle, 2),
     "eruption": (Eruption, 2),
+    "catch": (Catch, 2),
+    "dragonfish": (Dragonfish, 2),
+    "gulper": (Gulper, 2),
 }
 
 
@@ -1045,7 +1574,7 @@ class NightTank(Tank):
         for (kind, cruise, band, odds), depth in zip(kinds, depths):
             top = 1 + round(band[0] * (floor - 2))
             bottom = 1 + round(band[1] * (floor - 2))
-            critter = {"vampire-squid": VampireSquid, "spider-crab": Crab}.get(kind, Critter)(
+            critter = {"anglerfish": Angler, "vampire-squid": VampireSquid, "spider-crab": Crab}.get(kind, Critter)(
                 kind, width, top, bottom, depth, cruise)
             if isinstance(critter, Crab):
                 critter.ground = self.floor_top
@@ -1075,10 +1604,24 @@ class NightTank(Tank):
             self.flakes.append(f)
         self.puffs: list[Puff] = []
         self.sparks: list[Spark] = []
+        self.wake: list[Spark] = []  # stirred up by swimmers (see stir)
         self.lure_kernel = glow_kernel(3.0)
         self.light = None
         self.frame_count = 0
         self.init_events()
+
+    def stir(self, x: float, y: float, amount: float, vx: float = 0.0) -> None:
+        """Stir the water at (x, y) into about amount sparks (a fraction is
+        the chance of one), drifting off at vx."""
+        while amount > 0:
+            if amount >= 1 or random.random() < amount:
+                s = Spark()
+                s.x, s.y = x + random.uniform(-0.8, 0.8), y + random.uniform(-0.8, 0.8)
+                s.vx, s.vy = vx + random.uniform(-0.02, 0.02), random.uniform(-0.015, 0.015)
+                s.age, s.life = 0, random.randint(*WAKE_LIFE)
+                s.color = scale(mix(SPARK, (150, 255, 255), random.random() * 0.6), random.uniform(0.45, 1.0))
+                self.wake.append(s)
+            amount -= 1
 
     def units(self) -> list[Critter]:
         """The creatures that go their own way (with their schools)."""
@@ -1210,6 +1753,13 @@ class NightTank(Tank):
         shown = [fish for fish in self.fish if self.in_view(fish)]
         for fish in shown:
             fish.swim()
+            # Swimming faster than a drift, it stirs up sparks behind it
+            excess = fish.speed - WAKE_FROM
+            if excess > 0 and not isinstance(fish, Crab):
+                x, y = fish.pose(t)
+                tail = x - 1 if fish.facing > 0 else x + fish.w
+                fish_y = y + fish.h * 0.6 if fish.kind != "anglerfish" else y + 8
+                self.stir(tail, fish_y, excess * WAKE_RATE, -0.01 * fish.facing)
         if self.frame_count % 4 == 0:
             self.give_room()
 
@@ -1230,9 +1780,12 @@ class NightTank(Tank):
                     add_light(light, lx, ly, self.lure_kernel, 0.6 * min(fish.level(t), 1.2))
         extra = event.light() if event is not None and hasattr(event, "light") else None
         bg = None
+        tint = getattr(event, "tint", None) if extra is not None else None
         if extra is not None:
             light = light + extra
-            bg = self.dark_bg + (self.lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
+            # A colored light reveals the background in its own color
+            lit_bg = self.lit_bg if tint is None else self.lit_bg * np.array(tint, np.float32)
+            bg = self.dark_bg + (lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
         if active > 0.02:
             bg = (self.dark_bg if bg is None else bg) + self.eruption_glow * active
         fb = bytearray(self.background if bg is None else np.minimum(bg, 255).astype(np.uint8).tobytes())
@@ -1349,6 +1902,23 @@ class NightTank(Tank):
                         put_max(fb, width, height, lx + hx, ly + hy, scale(color, strength * min(level, 1.0)))
         if among:
             among.draw(fb, t)
+
+        # The wake swimmers leave, flaring and fading in the water around them
+        wake = []
+        for s in self.wake:
+            s.age += 1
+            if s.age < s.life:
+                wake.append(s)
+                s.x += s.vx
+                s.y += s.vy
+                put_max(fb, width, height, round(s.x), round(s.y), scale(s.color, (1 - s.age / s.life) ** 1.5))
+        self.wake = wake
+
+        if tint is not None:
+            # Everything a colored light falls on takes on its color
+            view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
+            keep = 1 - np.minimum(extra, 1)[..., None] * (1 - np.array(tint, np.float32))
+            view[:] = np.minimum(view * keep, 255).astype(np.uint8)
 
         if event and event.layer == FRONT:
             event.draw(fb, t)
