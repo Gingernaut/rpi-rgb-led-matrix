@@ -244,8 +244,15 @@ def pattern(variety: str, n: int) -> tuple[list[tuple], tuple, bool]:
     return patches(BLACK, WHITE, 3, (1, 3)), mix(BLACK, WHITE, 0.5), False  # kumonryu
 
 
+# Keeping apart: probes this far ahead of a koi's head (its head, a little
+# way on, further on) watch for other koi, this much clear of their bodies,
+# and how urgently it turns away for each
+AVOID_LOOK = (0.0, 3.0, 6.0)
+AVOID_GAP = 1.2
+AVOID_URGENCY = (1.0, 0.7, 0.35)
+
 VARIETIES = ["kohaku", "sanke", "showa", "tancho", "ogon", "platinum", "asagi", "chagoi", "kumonryu"]
-KOI = 7
+KOI = 6
 
 
 class Koi:
@@ -271,7 +278,11 @@ class Koi:
         self.color_array = np.array(self.colors, np.float32)
         self.fin_at = max(1, round(0.24 * (self.n - 1)))
         self.heading = random.uniform(0, TAU)
-        self.x, self.y = random.uniform(*VIEW[::2]), random.uniform(*VIEW[1::2])
+        # Somewhere clear of the koi already in the pond
+        for _ in range(50):
+            self.x, self.y = random.uniform(*VIEW[::2]), random.uniform(*VIEW[1::2])
+            if all(math.hypot(self.x - k.x, self.y - k.y) > 12 for k in pond.koi):
+                break
         self.points = [(self.x - i * math.cos(self.heading), self.y - i * math.sin(self.heading))
                        for i in range(self.n)]
         self.cruise = random.uniform(0.09, 0.16) * (0.85 if variety == "chagoi" else 1.0)
@@ -280,6 +291,7 @@ class Koi:
         self.z = self.z_to = random.uniform(0.15, 0.75)
         self.phase = random.uniform(0, TAU)
         self.task: str | None = None
+        self.avoid: tuple[int, float] | None = None  # (which way to turn, how urgently)
         self.calm_in = 0  # frames until a hiding koi comes out again
         self.pause = 0
         self.gulp = 0
@@ -300,7 +312,7 @@ class Koi:
         if random.random() < 0.3:
             self.z_to = random.uniform(0.1, 0.8)
 
-    def swim(self, others: list["Koi"]) -> None:
+    def swim(self) -> None:
         tx, ty = self.target
         dx, dy = tx - self.x, ty - self.y
         distance = math.hypot(dx, dy)
@@ -326,19 +338,15 @@ class Koi:
             # Slow down to arrive rather than overshoot
             want *= min(1.0, 0.3 + distance / 6)
         desired = math.atan2(dy, dx)
-
-        # Steer around koi swimming at about the same depth
-        for other in others:
-            if other is self or abs(other.z - self.z) > 0.35:
-                continue
-            for px, py in other.points[::3]:
-                ox, oy = px - self.x, py - self.y
-                if ox * ox + oy * oy < 12 and ox * math.cos(self.heading) + oy * math.sin(self.heading) > 0:
-                    side = math.cos(self.heading) * oy - math.sin(self.heading) * ox
-                    desired = self.heading - 0.9 * (1 if side > 0 else -1)
-                    break
-
         max_turn = 0.02 + 0.12 * self.speed
+
+        # Steer clear of the other koi (see Pond.keep_apart), yielding:
+        # turning away and slowing, more the closer they are
+        if self.avoid:
+            side, urgency = self.avoid
+            desired = self.heading + side * (0.5 + 1.2 * urgency)
+            want *= 1 - 0.75 * urgency
+            max_turn *= 1 + 1.5 * urgency
         self.heading = wrap(self.heading + max(-max_turn, min(max_turn, wrap(desired - self.heading) * 0.08)))
         self.speed += (want - self.speed) * (0.08 if self.task == "flee" else 0.04)
         self.x += math.cos(self.heading) * self.speed
@@ -437,7 +445,9 @@ class Pond(Tank):
         self.floor = height
         self.fish = []  # (the Tank's fish; the koi swim differently)
         varieties = random.sample(VARIETIES, KOI - 1) + [random.choice(("kohaku", "ogon", "showa"))]
-        self.koi = [Koi(self, v) for v in varieties]
+        self.koi = []
+        for v in varieties:
+            self.koi.append(Koi(self, v))
         self.ripples: list[list] = []  # [x, y, age, strength, life]
         self.glints: list[list[float]] = []  # [x, y, age, life]
         self.frame_count = 0
@@ -502,6 +512,45 @@ class Pond(Tank):
         self.pad_alpha = alpha[..., None]
         self.pad_shadow = shadow
 
+    def keep_apart(self) -> None:
+        """Set each koi's avoid when its head, or the water just ahead of it,
+        comes near another koi's body (at any depth: they rarely overlap).
+        A head right against another body is also pushed back off it."""
+        koi = self.koi
+        points = np.array([p for k in koi for p in k.points], np.float32)
+        owner = np.repeat(np.arange(len(koi)), [k.n for k in koi])
+        radius = np.array([r for k in koi for r in k.radii], np.float32)
+        probes = []
+        for k in koi:
+            c, s = math.cos(k.heading), math.sin(k.heading)
+            probes += [(k.x + c * a, k.y + s * a) for a in AVOID_LOOK]
+        probes = np.array(probes, np.float32)
+        d = np.hypot(probes[:, None, 0] - points[None, :, 0], probes[:, None, 1] - points[None, :, 1])
+        mine = np.repeat(np.arange(len(koi)), len(AVOID_LOOK))
+        girth = np.repeat(np.array([max(k.radii) for k in koi], np.float32), len(AVOID_LOOK))
+        reach = radius[None, :] + girth[:, None] + AVOID_GAP
+        clash = (d < reach) & (owner[None, :] != mine[:, None])
+        for i, k in enumerate(koi):
+            k.avoid = None
+            for j, urgency in enumerate(AVOID_URGENCY):
+                row = i * len(AVOID_LOOK) + j
+                hits = np.flatnonzero(clash[row])
+                if not len(hits):
+                    continue
+                near = hits[np.argmin(d[row, hits])]
+                px, py = points[near]
+                # Turn away from the side it's on
+                cross = math.cos(k.heading) * (py - k.y) - math.sin(k.heading) * (px - k.x)
+                k.avoid = (-1 if cross > 0 else 1, urgency)
+                if j == 0:
+                    gap = d[row, near]
+                    touch = radius[near] + girth[row]
+                    if gap < touch:
+                        push = (touch - gap) * 0.5 / max(gap, 0.1)
+                        k.x -= (px - k.x) * push
+                        k.y -= (py - k.y) * push
+                break
+
     def on_pad(self, x: float, y: float, margin: float = 0.0) -> bool:
         return any(math.hypot(x - cx, y - cy) < r - margin for cx, cy, r in PADS)
 
@@ -562,8 +611,9 @@ class Pond(Tank):
         self.direct()
         self.light += (self.light_to - self.light) * 0.02
         self.caustics += (self.caustics_to - self.caustics) * 0.02
+        self.keep_apart()
         for koi in self.koi:
-            koi.swim(self.koi)
+            koi.swim()
 
         caustic = self.caustic_light(t) * (CAUSTIC_HIGH * self.caustics)
         frame = self.floor_rgb * (self.light * (CAUSTIC_LOW + caustic))[..., None]
@@ -604,7 +654,7 @@ class Feeding(PondEvent):
         sx, sy = random.uniform(16, 48), random.uniform(9, 23)
         self.pellets = []
         for _ in range(random.randint(10, 15)):
-            a, d = random.uniform(0, TAU), abs(random.gauss(0, 2.4))
+            a, d = random.uniform(0, TAU), abs(random.gauss(0, 4.5))
             self.pellets.append({"x": sx + math.cos(a) * d, "y": sy + math.sin(a) * d,
                                  "vx": math.cos(a) * random.uniform(0, 0.02), "vy": math.sin(a) * random.uniform(0, 0.02),
                                  "at": random.randint(0, frames_for(1.5)), "eaten": False})
@@ -626,12 +676,26 @@ class Feeding(PondEvent):
             p["vx"] *= 0.995
             p["vy"] *= 0.995
         live = self.live()
-        for koi in self.tank.koi:
-            if self.frame_count < self.notice[id(koi)] or not live:
-                continue
+        # Each koi goes for its own pellet (the nearest one no koi nearer has
+        # claimed), so they don't pile up; with none left to claim, it waits
+        # a little way off
+        claimed = set()
+        hungry = [k for k in self.tank.koi if self.frame_count >= self.notice[id(k)]]
+        hungry.sort(key=lambda k: min(((p["x"] - k.x) ** 2 + (p["y"] - k.y) ** 2 for p in live), default=0))
+        for koi in hungry:
+            if not live:
+                break
             mx, my = koi.mouth()
-            nearest = min(live, key=lambda p: (p["x"] - mx) ** 2 + (p["y"] - my) ** 2)
-            koi.task, koi.pace, koi.z_to = "feed", 2.2, 0.0
+            free = [p for p in live if id(p) not in claimed]
+            koi.task, koi.z_to = "feed", 0.0
+            if not free:
+                koi.pace = 0.6
+                nearest = min(live, key=lambda p: (p["x"] - mx) ** 2 + (p["y"] - my) ** 2)
+                koi.target = (nearest["x"] + (koi.x - nearest["x"]) * 0.8, nearest["y"] + (koi.y - nearest["y"]) * 0.8)
+                continue
+            nearest = min(free, key=lambda p: (p["x"] - mx) ** 2 + (p["y"] - my) ** 2)
+            claimed.add(id(nearest))
+            koi.pace = 2.2
             koi.target = (nearest["x"], nearest["y"])
             if math.hypot(nearest["x"] - mx, nearest["y"] - my) < 1.3 and koi.z < 0.35:
                 nearest["eaten"] = True
@@ -807,6 +871,11 @@ class Dragonfly(PondEvent):
         body.paint(frame)
 
 
+# Out of view, where koi hide from the heron besides under the pads
+HIDEOUTS = [(-10.0, 8.0), (-10.0, 24.0), (WIDTH + 10.0, 8.0), (WIDTH + 10.0, 24.0),
+            (20.0, -8.0), (44.0, -8.0), (20.0, HEIGHT + 8.0), (44.0, HEIGHT + 8.0)]
+
+
 class Heron(PondEvent):
     """A heron's shadow sweeps over the pond, and the koi bolt for cover deep
     under the lily pads, coming out again a while after it's gone."""
@@ -836,11 +905,14 @@ class Heron(PondEvent):
         x, y = self.position()
         if not self.scared and -12 < x < WIDTH + 12:
             self.scared = True
-            for koi in self.tank.koi:
-                # To the nearest pad, deep
-                cx, cy, r = min(PADS, key=lambda p: math.hypot(p[0] - koi.x, p[1] - koi.y))
+            # Each koi to its own cover, deep: under a pad or out of view,
+            # nearest first
+            spots = [(cx, cy) for cx, cy, r in PADS] + HIDEOUTS
+            for koi in sorted(self.tank.koi, key=lambda k: min(math.hypot(x - k.x, y - k.y) for x, y in spots)):
+                spot = min(spots, key=lambda p: math.hypot(p[0] - koi.x, p[1] - koi.y))
+                spots.remove(spot)
                 koi.task, koi.pace, koi.z_to = "flee", 4.0, 1.0
-                koi.target = (cx + random.uniform(-1, 1), cy + random.uniform(-1, 1))
+                koi.target = spot
         return self.frame_count < self.frames
 
     def end(self) -> None:
