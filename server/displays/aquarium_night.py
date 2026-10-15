@@ -83,6 +83,13 @@ EMBER_GRAVITY = 0.012
 TUBE = (140, 132, 118)
 PLUME = (215, 25, 35)
 
+# The glow around a lure: (dx, dy, strength) out to a few pixels
+LURE_HALO = [
+    (dx, dy, 0.55 * math.exp(-(dx * dx + dy * dy) / (2 * 1.5 ** 2)))
+    for dy in range(-3, 4) for dx in range(-3, 4)
+    if 0 < dx * dx + dy * dy <= 10
+]
+
 SNOW_FLAKES = 28
 SPARK = (40, 210, 170)
 
@@ -96,34 +103,30 @@ SPARK = (40, 210, 170)
 CREATURES = {
     "anglerfish": dict(
         palette={"B": (120, 88, 72), "D": (88, 64, 54), "W": ((240, 235, 215), (40, 38, 34)),
-                 "M": ((90, 20, 24), (18, 4, 5)), "E": ((230, 225, 200), (30, 29, 26)), "S": (110, 90, 70),
+                 "M": ((90, 20, 24), (18, 4, 5)), "K": ((15, 12, 14), (3, 2, 3)), "S": (125, 100, 78),
                  "F": (100, 74, 62)},
         glows={"L": (120, 255, 200)},
         lamps="L",
         frames=[
             [
-                ".......SSS....",
-                "......S...S...",
-                "....DDDD...S..",
-                "..DDBBBBBB..L.",
-                "TDBBBBBBEBB...",
-                "TTBBBBBBBBWBW.",
-                "TTBBBBBBMMMMM.",
-                "TDBBBBBBBWBWBW",
-                "..BBBBBBBBBBB.",
-                "....F...F.....",
+                ".....SSS...",
+                "....S...S..",
+                "..DDS....S.",
+                ".DBBBBK...L",
+                "TBBBBBBBW..",
+                "TTBBBBBMMW.",
+                "TBBBBBBBWBW",
+                "..BBBBBBB..",
             ],
             [
-                ".......SSS....",
-                "......S...S...",
-                "....DDDD...S..",
-                "T.DDBBBBBB..L.",
-                "TDBBBBBBEBB...",
-                ".TBBBBBBBBWBW.",
-                ".TBBBBBBMMMMM.",
-                "TDBBBBBBBWBWBW",
-                "T.BBBBBBBBBBB.",
-                ".....F...F....",
+                ".....SSS...",
+                "....S...S..",
+                "T.DDS....S.",
+                "TDBBBBK...L",
+                ".BBBBBBBW..",
+                ".TBBBBBMMW.",
+                "TBBBBBBBWBW",
+                "T.BBBBBBB..",
             ],
         ],
     ),
@@ -632,8 +635,8 @@ class Siphonophore(Event):
 
 
 class CombJelly(Event):
-    """A comb jelly or two drift by, rows of beating combs rippling with
-    rainbow light down their clear bodies, two fine tentacles trailing."""
+    """A comb jelly drifts by, rows of beating combs rippling with rainbow
+    light down its clear body, two fine tentacles trailing."""
 
     layer = BACK
 
@@ -644,7 +647,7 @@ class CombJelly(Event):
         super().__init__(tank)
         self.facing = random.choice((1, -1))
         self.jellies = []
-        drifts = sorted((random.uniform(*COMB_SPEED) for _ in range(random.randint(1, 2))), reverse=True)
+        drifts = [random.uniform(*COMB_SPEED)]
         for i, drift in enumerate(drifts):
             j = CombJelly.Jelly()
             j.x = (-5 - i * random.uniform(18, 26)) if self.facing > 0 else tank.width + 5 + i * random.uniform(18, 26)
@@ -922,7 +925,7 @@ class NightTank(Tank):
             self.flakes.append(f)
         self.puffs: list[Puff] = []
         self.sparks: list[Spark] = []
-        self.lure_kernel = glow_kernel(2.2)
+        self.lure_kernel = glow_kernel(3.0)
         self.light = None
         self.frame_count = 0
         self.init_events()
@@ -1182,11 +1185,11 @@ class NightTank(Tank):
             level = fish.level(t)
             fish.sprite.draw(fb, width, height, x, y, fish.facing, int(fish.tail), light_rows, level)
             if fish.sprite.lamps[0][0] and level > 0.05:
-                # A soft halo around a lure
+                # A soft glow diffusing out around a lure
+                color = CREATURES[fish.kind]["glows"]["L"]
                 for lx, ly in fish.lamps(t):
-                    halo = scale(CREATURES[fish.kind]["glows"]["L"], 0.3 * min(level, 1.0))
-                    for hx, hy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                        put_max(fb, width, height, lx + hx, ly + hy, halo)
+                    for hx, hy, strength in LURE_HALO:
+                        put_max(fb, width, height, lx + hx, ly + hy, scale(color, strength * min(level, 1.0)))
         if among:
             among.draw(fb, t)
 
