@@ -22,37 +22,23 @@ TIDE_FEET=<feet> holds the tide at that height (about -2 to 13 here):
 Requires the rgbmatrix Python bindings (make build-python), numpy and requests.
 """
 
-import bisect
-import json
 import math
 import os
 import random
-import sys
-import threading
 import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import numpy as np
-import requests
 
 from aquarium_common import FRAME_SECONDS, Event, Tank, flip, frames_for
 from matrix_common import run_scene
+from noaa_tides import Predictions
 
 WIDTH, HEIGHT = 64, 32
 TAU = math.tau
 
 # --- The tide ----------------------------------------------------------------
 
-TIDE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 TIDE_STATION = "9447130"  # Seattle
-TIDE_MAX_AGE = 12 * 3600
-TIDE_DAYS = 4  # of predictions fetched, from yesterday
-TIDE_DAY = 24.84 * 3600  # a lunar day: the tides come round again about this often
-FETCH_RETRY = 300
-FETCH_RETRY_MAX = 3600
-CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "tides"
-CACHE_FILE = CACHE_DIR / "hilo.json"
 
 # The water's surface (rows down from the top) by tide height in feet: at
 # LOW_FEET and below the pool is cut off and its water rests at the rim;
@@ -61,16 +47,9 @@ LOW_FEET, HIGH_FEET = 6.0, 12.0
 RIM_LEVEL, HIGH_LEVEL = 15.4, 9.2
 
 
-def log(message: str) -> None:
-    print(f"tide_pool: {message}", file=sys.stderr, flush=True)
-
-
 class Tide:
-    """The tide's height now, from NOAA's predicted highs and lows (kept
-    fresh by a background thread), with cosine curves between them. Past
-    the end of them (NOAA unreachable for days), the same tide a whole number
-    of lunar days earlier; before any have arrived, a stand-in tide of the
-    right sort."""
+    """The tide's height now in Seattle (see noaa_tides), or TIDE_FEET's;
+    before any predictions have arrived, a stand-in tide of the right sort."""
 
     def __init__(self) -> None:
         fixed = os.environ.get("TIDE_FEET")
@@ -78,72 +57,16 @@ class Tide:
             self.fixed = None if fixed is None else float(fixed)
         except ValueError:
             raise SystemExit(f"TIDE_FEET must be a number of feet, not {fixed!r}") from None
-        # (times, heights), swapped in whole so the fetch thread can't be
-        # caught halfway through replacing them
-        self.points: tuple[list[float], list[float]] = ([], [])
-        self.fetched = 0.0  # when the predictions in hand were fetched
-        if self.fixed is None:
-            self.load()
-            threading.Thread(target=self.loop, name="tide-feed", daemon=True).start()
+        self.predictions = None if self.fixed is not None else Predictions(TIDE_STATION)
 
     def feet(self, now: float) -> float:
         if self.fixed is not None:
             return self.fixed
-        times, heights = self.points
-        if len(times) >= 2 and now >= times[-1]:
-            now -= (math.floor((now - times[-1]) / TIDE_DAY) + 1) * TIDE_DAY
-        i = bisect.bisect_right(times, now)
-        if 0 < i < len(times):
-            k = (now - times[i - 1]) / (times[i] - times[i - 1])
-            return heights[i - 1] + (heights[i] - heights[i - 1]) * (1 - math.cos(math.pi * k)) / 2
-        # A semidiurnal stand-in: highs and lows about 12.4 hours apart
-        return 6.0 + 5.0 * math.sin(now / (12.42 * 3600) * TAU)
-
-    def load(self) -> None:
-        try:
-            self.parse(json.loads(CACHE_FILE.read_text()))
-            self.fetched = CACHE_FILE.stat().st_mtime
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-
-    def parse(self, data: dict) -> None:
-        points = []
-        for p in data["predictions"]:
-            when = datetime.strptime(p["t"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-            points.append((when.timestamp(), float(p["v"])))
-        points.sort()
-        if len(points) < 2:
-            raise ValueError("no predictions")
-        self.points = ([p[0] for p in points], [p[1] for p in points])
-
-    def loop(self) -> None:
-        retry = FETCH_RETRY
-        while True:
-            if time.time() - self.fetched < TIDE_MAX_AGE:
-                time.sleep(600)
-                continue
-            try:
-                start = datetime.now(timezone.utc) - timedelta(days=1)
-                r = requests.get(TIDE_URL, timeout=15, params={
-                    "product": "predictions", "application": "pixel_display",
-                    "begin_date": start.strftime("%Y%m%d"), "range": TIDE_DAYS * 24,
-                    "datum": "MLLW", "station": TIDE_STATION, "time_zone": "gmt",
-                    "units": "english", "interval": "hilo", "format": "json"})
-                r.raise_for_status()
-                data = r.json()
-                self.parse(data)
-                self.fetched = time.time()
-                retry = FETCH_RETRY
-            except Exception as e:  # keep what we have; try again later
-                log(f"tide fetch failed, retrying: {type(e).__name__}: {e}")
-                time.sleep(retry)
-                retry = min(retry * 2, FETCH_RETRY_MAX)
-                continue
-            try:
-                CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                CACHE_FILE.write_text(json.dumps(data))
-            except OSError as e:  # the predictions are in hand; only the next start misses them
-                log(f"couldn't cache the tides: {e}")
+        feet = self.predictions.feet(now)
+        if feet is None:
+            # A semidiurnal stand-in: highs and lows about 12.4 hours apart
+            return 6.0 + 5.0 * math.sin(now / (12.42 * 3600) * TAU)
+        return feet
 
 
 def level_for(feet: float) -> float:
