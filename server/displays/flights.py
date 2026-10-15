@@ -1108,7 +1108,7 @@ class Flights:
         now = self.now()
         t = self.frame_count * FRAME_SECONDS
         self.update_sky(now)
-        frame = np.empty((HEIGHT, WIDTH, 3), np.float32)
+        frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
         lights = []
         self.draw_sky(frame, t, lights)
 
