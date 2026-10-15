@@ -18,7 +18,7 @@ Every half minute or so something happens (see EVENTS): a giant squid jets
 past and the creatures put out their lights, a submersible's lamps sweep the
 dark, a siphonophore or a comb jelly drifts by, something unseen startles
 the water into a wave of sparks, the vent erupts, the anglerfish lures in a
-meal, a black dragonfish hunts by its red searchlight, or a gulper eel opens
+meal, a black dragonfish noses through, or a gulper eel opens
 its enormous mouth. AQUARIUM_EVENT=<name> shows just that one (see
 aquarium_common):
 
@@ -375,8 +375,7 @@ CATCH_BURST = (60, 140, 255)  # the prey's lights, scattered as it's snapped up
 CLEAR_AHEAD = 10
 
 # A black dragonfish: long, slender and black, fangs bared, a barbel dangling
-# from its chin to a glowing tip, and under its eye a red photophore that
-# lights the water ahead with a light nothing else down here can see
+# from its chin to a glowing tip, and a red photophore under its eye
 DRAGON = dict(
     # A sheen along its back ("D") to show its outline, its dorsal and anal
     # fins far back by the tail, a row of lights along its belly, and its
@@ -409,11 +408,7 @@ DRAGON = dict(
         ],
     ],
 )
-DRAGON_LAMP = (20, 2)  # the red photophore, in sprite coordinates
-DRAGON_SNOUT = 4  # how far the jaws reach past the lamp; its beam starts beyond them
 DRAGON_SPEED = 0.1
-DRAGON_BEAM_LENGTH = 26
-DRAGON_TINT = (1.8, 0.15, 0.1)  # what its light makes of each channel
 
 # A gulper eel: a long whip of a body behind a head that's nearly all mouth,
 # a light glowing at its tail tip
@@ -1314,22 +1309,17 @@ class Catch(Event):
 
 class Dragonfish(Event):
     """A black dragonfish noses through, slow and dark against the dark, the
-    barbel at its chin dangling a glowing lure. Under its eye a red
-    photophore sweeps a searchlight through the water ahead, and whatever it
-    falls on shows up red: a light only it can see, so nothing turns from it.
-    Partway across it stops a while, as if looking. It keeps to the
+    barbel at its chin dangling a glowing lure and a red photophore under
+    its eye. Partway across it stops a while, as if looking. It keeps to the
     clearest water it can, and the fish keep clear of it."""
 
     depth = 0.3
-    tint = DRAGON_TINT
 
     def __init__(self, tank: "NightTank") -> None:
         super().__init__(tank)
         self.sprite = Glower(DRAGON["palette"], DRAGON["frames"], DRAGON["glows"], lamps="L", dim=1.0)
         self.facing = random.choice((1, -1))
-        lamp = self.sprite.at(0, self.facing, DRAGON_LAMP)
-        # Far enough out that the beam slides into view ahead of it
-        self.x = (-DRAGON_BEAM_LENGTH * 0.6 if self.facing > 0 else tank.width + DRAGON_BEAM_LENGTH * 0.6) - lamp
+        self.x = -self.sprite.w - 1.0 if self.facing > 0 else tank.width + 1.0
         # At a depth clear of whoever's about, barbel and all
         self.y0 = tank.lane(1, tank.floor - 11, 1, self.sprite.h + 1)
         self.stop_at = tank.width * random.uniform(0.35, 0.6)
@@ -1337,7 +1327,6 @@ class Dragonfish(Event):
         self.speed = DRAGON_SPEED
         self.tail = 0.0
         self.frame_count = 0
-        self.beam = np.zeros((tank.height, tank.width), np.float32)
 
     @property
     def y(self) -> float:
@@ -1345,7 +1334,7 @@ class Dragonfish(Event):
 
     def step(self) -> bool:
         tank = self.tank
-        width, height = tank.width, tank.height
+        width = tank.width
         self.frame_count += 1
         middle = self.x + self.sprite.w / 2
         if self.pause and (middle - self.stop_at) * self.facing >= 0:
@@ -1356,22 +1345,8 @@ class Dragonfish(Event):
         self.x += self.speed * self.facing
         self.tail = (self.tail + 0.04 + self.speed * 0.4) % 2
         tank.stir(self.sprite.at(self.x, self.facing, (0, 2)), self.y + 2, max(0.0, self.speed - WAKE_FROM) * WAKE_RATE)
-        # The red beam, sweeping slowly up and down, fading with distance,
-        # and coming on past its jaws so it doesn't redden its own head
-        lx = self.sprite.at(self.x, self.facing, DRAGON_LAMP) + 0.5
-        ly = round(self.y) + DRAGON_LAMP[1] + 0.5
-        ahead = (np.arange(width, dtype=np.float32) + 0.5 - lx) * self.facing
-        tilt = 0.08 + 0.22 * math.sin(self.frame_count * FRAME_SECONDS * 0.5)
-        off = np.arange(height, dtype=np.float32)[:, None] + 0.5 - ly - ahead * tilt
-        spread = np.maximum(ahead * 0.28 + 0.7, 0.1)
-        self.beam = (0.9 * np.clip(1.1 - np.abs(off) / spread, 0, 1)
-                     * np.clip(1 - ahead / DRAGON_BEAM_LENGTH, 0, 1) ** 1.3
-                     * np.clip((ahead - DRAGON_SNOUT) / 3, 0, 1)).astype(np.float32)
         # Until it's gone out the other side
         return (self.x + self.sprite.w >= 0) if self.facing < 0 else (self.x <= width)
-
-    def light(self) -> np.ndarray:
-        return self.beam
 
     def obstacles(self) -> list[tuple[float, float, float, float]]:
         # The whole fish, barbel and all, and the water it's heading into
@@ -1918,12 +1893,9 @@ class NightTank(Tank):
                     add_light(light, lx, ly, self.lure_kernel, 0.6 * min(fish.level(t), 1.2))
         extra = event.light() if event is not None and hasattr(event, "light") else None
         bg = None
-        tint = getattr(event, "tint", None) if extra is not None else None
         if extra is not None:
             light = light + extra
-            # A colored light reveals the background in its own color
-            lit_bg = self.lit_bg if tint is None else self.lit_bg * np.array(tint, np.float32)
-            bg = self.dark_bg + (lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
+            bg = self.dark_bg + (self.lit_bg - self.dark_bg) * np.minimum(extra, 1)[..., None]
         if active > 0.02:
             bg = (self.dark_bg if bg is None else bg) + self.eruption_glow * active
         fb = bytearray(self.background if bg is None else np.minimum(bg, 255).astype(np.uint8).tobytes())
@@ -2053,12 +2025,6 @@ class NightTank(Tank):
                 s.vy *= 0.96
                 put_max(fb, width, height, round(s.x), round(s.y), scale(s.color, (1 - s.age / s.life) ** 1.5))
         self.wake = wake
-
-        if tint is not None:
-            # Everything a colored light falls on takes on its color
-            view = np.frombuffer(fb, np.uint8).reshape(height, width, 3)
-            keep = 1 - np.minimum(extra, 1)[..., None] * (1 - np.array(tint, np.float32))
-            view[:] = np.minimum(view * keep, 255).astype(np.uint8)
 
         if event and event.layer == FRONT:
             event.draw(fb, t)
