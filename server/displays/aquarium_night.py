@@ -2,8 +2,8 @@
 """The deep sea at night: black water with marine snow drifting down, a
 hydrothermal vent smoldering on the sea floor among red-plumed tube worms,
 and a few deep-sea creatures, seen mostly by their own light: an anglerfish
-with its glowing lure, lanternfish, a viperfish and a glowing jellyfish, and
-now and then a vampire squid or a crab scuttling along the floor. They take turns: only one to three are in view at
+with its glowing lure, lanternfish, a viperfish, a glowing jellyfish and a
+crab scuttling along the floor, and now and then a vampire squid. They take turns: only one to three are in view at
 a time, each staying a while before swimming off.
 
 Light decides what's seen. Each creature has its true colors, which show only
@@ -245,14 +245,14 @@ CREATURES = {
 
 # (creature, how many, cruising speeds, how high it keeps from 0 the surface
 # to 1 the floor, how likely it is to be the next to visit) swimming on their
-# own. The vampire squid and the crab only come by now and then.
+# own. The vampire squid only comes by now and then.
 TANK = [
     ("anglerfish", 1, (0.03, 0.06), (0.3, 1.0), 1.0),
     ("lanternfish", 2, (0.18, 0.28), (0.0, 0.8), 1.0),
     ("viperfish", 1, (0.08, 0.14), (0.1, 0.8), 1.0),
     ("jellyfish", 1, (0.04, 0.07), (0.0, 0.7), 1.0),
     ("vampire-squid", 1, (0.05, 0.08), (0.15, 0.8), 0.25),
-    ("crab", 1, (0.05, 0.08), (1.0, 1.0), 0.25),
+    ("crab", 1, (0.05, 0.08), (1.0, 1.0), 1.0),
 ]
 
 # The creatures take turns: ON_SCREEN of them (a school counts each fish) are
