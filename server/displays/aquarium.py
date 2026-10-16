@@ -28,7 +28,7 @@ import random
 import numpy as np
 
 from aquarium_common import (
-    AMONG, BACK, FLEE_SPEED, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite,
+    AMONG, BACK, FRAME_SECONDS, JELLY_FRAMES, SUB_LAMP, SUB_PALETTE, SUB_PROPS, Event, Fish, Sprite,
     Tank, flip, frames_for, render_sprite, school, submarine_frames,
 )
 from matrix_common import fade_lut, mix, put, put_max, run_scene, scale
@@ -423,16 +423,15 @@ class Anemone:
 class Clownfish(Fish):
     """A clownfish that keeps near its anemone: it pokes about within a short
     way of it, now and then goes home to nestle among the tentacles a while,
-    turning about in them, and when the shark comes it dives in there rather
-    than fleeing, and stays until it's gone. It ducks home, too, when one of
-    the other fish (its neighbors) swims close, rather than mingle."""
+    turning about in them. When the shark comes it flees out of view with
+    the rest, coming back once it's gone. It ducks home when one of the
+    other fish (its neighbors) swims close, rather than mingle."""
 
     def __init__(self, sprite, width: int, depth: float, cruise: tuple[float, float],
                  home: Anemone, slot: tuple[float, float]) -> None:
         self.home = home
         self.slot = slot  # where it sits in the anemone
         self.nestled = 0  # frames left at home
-        self.hiding = False
         self.neighbors: list[Fish] = []  # the other fish in the tank (set by it)
         # Roaming, it keeps above the tentacles, only dipping into them at home
         super().__init__(sprite, width, max(1, home.top - 15), home.top - 1, depth, cruise)
@@ -449,15 +448,6 @@ class Clownfish(Fish):
         self.turn_x = hi - short if self.facing > 0 else lo + short
 
     def wander(self) -> None:
-        if self.hiding:
-            self.go_home(FLEE_SPEED)
-            if self.calm_in:
-                self.calm_in -= 1
-                if not self.calm_in:
-                    # Lingering a little before venturing out again
-                    self.hiding = False
-                    self.nestled = frames_for(random.uniform(1.5, 5.0))
-            return
         if self.nestled:
             self.go_home(1.0)
             self.nestled -= 1
@@ -484,8 +474,6 @@ class Clownfish(Fish):
         """Swim to its place in the anemone, at hurry times cruising speed,
         and turn about there now and then."""
         sx, sy = self.slot
-        if self.hiding:
-            sy += 1  # down among the tips
         dx = sx - self.x
         if abs(dx) > 1.5:
             self.facing = 1 if dx > 0 else -1
@@ -498,13 +486,8 @@ class Clownfish(Fish):
         self.vy += (climb - self.vy) * 0.2
 
     def flee(self, from_x: float) -> None:
-        self.hiding = True
-        self.calm_in = 0
-        self.pause = 0
-
-    def calm(self, delay: int) -> None:
-        if self.hiding:
-            self.calm_in = max(1, delay)
+        self.nestled = 0
+        super().flee(from_x)
 
 
 class Tetra(Fish):
@@ -1002,7 +985,7 @@ def keep_clear(event: Event, boxes: list[tuple[float, float, float, float]]) -> 
     right, bottom) boxes that steering around it hasn't got clear, and let
     any it has caught up with carry on out, rather than swim through it."""
     for fish in event.free_fish():
-        if fish.fleeing or getattr(fish, "nestled", 0) or getattr(fish, "hiding", False):
+        if fish.fleeing or getattr(fish, "nestled", 0):
             continue  # gone, or at home in the anemone
         left, right = fish.x - fish.spread[0], fish.x + fish.w + fish.spread[1]
         top, bottom = fish.y - fish.stack[0], fish.y + fish.h + fish.stack[1]
