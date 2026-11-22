@@ -8,6 +8,11 @@ from pathlib import Path
 from server.config import DisplayConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+READY_FD_ENV = "PIXEL_DISPLAY_READY_FD"
+
+
+class DisplayStartError(Exception):
+    pass
 
 
 class DisplayManager:
@@ -16,70 +21,103 @@ class DisplayManager:
     def __init__(self, config: DisplayConfig) -> None:
         self._config = config
         self._process: subprocess.Popen | None = None
+        self._mode: str | None = None
+        self._ready_fd: int | None = None
+        self._ready = False
         self._lock = threading.Lock()
 
-    @property
-    def is_running(self) -> bool:
-        return self._process is not None and self._process.poll() is None
-
-    @property
-    def current_pid(self) -> int | None:
-        return self._process.pid if self.is_running else None
+    def status(self) -> dict:
+        with self._lock:
+            process = self._process
+            exit_code = process.poll() if process is not None else None
+            alive = process is not None and exit_code is None
+            if alive and self._ready_fd is not None:
+                try:
+                    self._ready = os.read(self._ready_fd, 1) == b"1"
+                except BlockingIOError:
+                    pass
+                else:
+                    self._close_ready_fd()
+            if alive:
+                state = "running" if self._ready else "starting"
+            else:
+                self._close_ready_fd()
+                if self._mode is None:
+                    state = "off"
+                else:
+                    state = "exited" if exit_code == 0 else "failed"
+            return {
+                "status": state,
+                "running": alive,
+                "pid": process.pid if alive else None,
+                "mode": self._mode,
+                "exit_code": exit_code,
+            }
 
     def start(
         self,
         cmd: list[str],
         extra_args: list[str] | None = None,
-        env: dict[str, str] | None = None,
     ) -> int:
-        """Kill any running display, then start a new one. Returns the new PID."""
-        with self._lock:
-            self.stop()
-            full_cmd = cmd + self._config.to_args() + (extra_args or [])
-            proc_env = {**os.environ, **(env or {})}
-            self._process = subprocess.Popen(
-                full_cmd, cwd=PROJECT_ROOT, env=proc_env, start_new_session=True,
-            )
-            return self._process.pid
+        return self._start(cmd + self._config.to_args() + (extra_args or []), "demo")
 
     def start_python(
         self,
         script: str,
-        extra_args: list[str] | None = None,
-        env: dict[str, str] | None = None,
+        *,
+        mode: str,
     ) -> int:
-        """Start a Python display script using the current interpreter. The
-        project's editable install puts the rgbmatrix bindings on its path."""
+        cmd = [sys.executable, str(PROJECT_ROOT / script)] + self._config.to_python_args()
+        return self._start(cmd, mode)
+
+    def _start(self, cmd: list[str], mode: str) -> int:
         with self._lock:
-            self.stop()
-            script_path = str(PROJECT_ROOT / script)
-            full_cmd = (
-                [sys.executable, script_path]
-                + self._config.to_python_args()
-                + (extra_args or [])
-            )
-            proc_env = {**os.environ, **(env or {})}
-            self._process = subprocess.Popen(
-                full_cmd, cwd=PROJECT_ROOT, env=proc_env, start_new_session=True,
-            )
+            self._stop_locked()
+            self._mode = mode
+            try:
+                read_fd, write_fd = os.pipe()
+                try:
+                    os.set_blocking(read_fd, False)
+                    self._process = subprocess.Popen(
+                        cmd, cwd=PROJECT_ROOT, start_new_session=True, pass_fds=(write_fd,),
+                        env={**os.environ, READY_FD_ENV: str(write_fd)},
+                    )
+                except BaseException:
+                    os.close(read_fd)
+                    raise
+                finally:
+                    os.close(write_fd)
+            except OSError as error:
+                raise DisplayStartError(f"Could not start {mode}: {error.strerror}") from error
+            self._ready_fd = read_fd
             return self._process.pid
 
     def stop(self) -> None:
-        """Stop the current display process if one is running."""
-        if self._process is None:
-            return
+        with self._lock:
+            self._stop_locked()
 
-        # Reap a process that already exited on its own (prevents zombies)
-        if self._process.poll() is not None:
-            self._process = None
-            return
-
-        # Kill the entire process group so child processes are cleaned up too
-        pgid = os.getpgid(self._process.pid)
-        os.killpg(pgid, signal.SIGTERM)
-        try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(pgid, signal.SIGKILL)
-            self._process.wait()
+    def _stop_locked(self) -> None:
+        process = self._process
+        if process is not None and process.poll() is None:
+            self._signal_group(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._signal_group(process.pid, signal.SIGKILL)
+                process.wait()
+        self._close_ready_fd()
         self._process = None
+        self._mode = None
+        self._ready = False
+
+    def _close_ready_fd(self) -> None:
+        if self._ready_fd is not None:
+            os.close(self._ready_fd)
+            self._ready_fd = None
+
+    @staticmethod
+    def _signal_group(pid: int, sig: signal.Signals) -> None:
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            pass

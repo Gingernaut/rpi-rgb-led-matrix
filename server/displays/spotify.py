@@ -21,8 +21,8 @@ from spotipy.oauth2 import SpotifyOauthError
 from PIL import Image
 from pydantic import BaseModel, field_validator
 
-from matrix_common import create_matrix, parse_matrix_args, run_display
-from spotify_auth import PROJECT_ROOT, make_auth_manager
+from matrix_common import create_matrix, notify_ready, parse_matrix_args, run_display
+from spotify_auth import PROJECT_ROOT, SpotifyLoginRequired, make_auth_manager
 
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
 FONTS_DIR = PROJECT_ROOT / "fonts"
@@ -65,11 +65,10 @@ class CurrentSong(BaseModel):
 
 
 def describe_poll_error(e: Exception) -> str:
-    # invalid_grant: the saved refresh token was revoked or expired. EOFError:
-    # there's no usable saved token, so spotipy fell back to an interactive login
-    # prompt, and there's no stdin under the service.
-    if isinstance(e, EOFError) or (isinstance(e, SpotifyOauthError) and e.error == "invalid_grant"):
-        return "Spotify login expired; run server/displays/spotify_auth.py to log in again"
+    if isinstance(e, SpotifyLoginRequired) or (
+        isinstance(e, SpotifyOauthError) and e.error == "invalid_grant"
+    ):
+        return "Spotify login required. Run server/displays/spotify_auth.py to log in."
     return f"{type(e).__name__}: {e}"
 
 
@@ -87,7 +86,9 @@ class SpotifyDisplay:
     def __init__(self, args: argparse.Namespace) -> None:
         # Spotify client, only used from the poller thread once run() starts
         self.sp = spotipy.Spotify(
-            auth_manager=make_auth_manager(os.environ["CLIENT_ID"], os.environ["CLIENT_SECRET"])
+            auth_manager=make_auth_manager(
+                os.environ["CLIENT_ID"], os.environ["CLIENT_SECRET"], interactive=False,
+            ),
         )
         self.http = requests.Session()
 
@@ -117,7 +118,7 @@ class SpotifyDisplay:
 
     def fetch_current_song(self) -> CurrentSong | None:
         track = self.sp.current_user_playing_track()
-        if not track or not track.get("item"):
+        if not track or not track.get("is_playing") or not track.get("item"):
             return None
 
         item = track["item"]
@@ -168,23 +169,29 @@ class SpotifyDisplay:
         self.last_poll_error = None
         return True
 
-    def poll_loop(self, delay: float) -> None:
-        while not self.stopping.wait(delay):
+    def poll_loop(self) -> None:
+        delay = POLL_SECONDS
+        while not self.stopping.is_set():
             delay = POLL_SECONDS if self.try_poll() else min(delay * 2, MAX_POLL_BACKOFF_SECONDS)
+            if self.stopping.wait(delay):
+                break
 
     def run(self) -> None:
         graphics = self.graphics
-        # First poll before the first frame, so a playing song doesn't flash the logo
-        delay = POLL_SECONDS if self.try_poll() else 2 * POLL_SECONDS
-        threading.Thread(target=self.poll_loop, args=(delay,), name="spotify-poll", daemon=True).start()
-
         canvas = self.matrix.CreateFrameCanvas()
+        canvas.Clear()
+        canvas.SetPixelsRGB(self.icon_rgb, ICON_SIZE, ICON_SIZE, 1, 1)
+        canvas = self.matrix.SwapOnVSync(canvas)
+        notify_ready()
+        threading.Thread(target=self.poll_loop, name="spotify-poll", daemon=True).start()
+
         text_color = graphics.Color(255, 255, 255)
         scroll_x = canvas.width
         font = None
-        shown = object()  # what's on the panel: a NowPlaying, None (logo), or unset
+        shown = None
 
         while True:
+            self.changed.clear()
             now_playing = self.now_playing
 
             if now_playing is None:
@@ -195,11 +202,15 @@ class SpotifyDisplay:
                     canvas.SetPixelsRGB(self.icon_rgb, ICON_SIZE, ICON_SIZE, 1, 1)
                     canvas = self.matrix.SwapOnVSync(canvas)
                     shown = None
-                self.changed.wait(timeout=1.0)
-                self.changed.clear()
+                self.changed.wait()
                 continue
 
             song = now_playing.song
+            combine = song.should_combine_text()
+            scroll_title = song.should_scroll_title()
+            if now_playing is shown and not (combine or scroll_title):
+                self.changed.wait()
+                continue
             if now_playing is not shown:
                 shown = now_playing
                 font = self.fonts[song.get_font_name()]
@@ -208,7 +219,7 @@ class SpotifyDisplay:
             # Render frame
             canvas.Clear()
 
-            if song.should_combine_text():
+            if combine:
                 combined = f"{song.artist} - {song.title}"
                 text_len = graphics.DrawText(
                     canvas, font, scroll_x, 18, text_color, combined
@@ -228,7 +239,7 @@ class SpotifyDisplay:
                 )
 
                 # Title — static or scrolling
-                if not song.should_scroll_title():
+                if not scroll_title:
                     graphics.DrawText(
                         canvas, font, artist_x, 26, text_color, song.title
                     )

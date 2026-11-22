@@ -1,11 +1,12 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.config import config
-from server.display import DisplayManager
+from server.display import DisplayManager, DisplayStartError
 
 
 display = DisplayManager(config)
@@ -38,6 +39,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Pixel Display", lifespan=lifespan)
 
 
+@app.exception_handler(DisplayStartError)
+async def display_start_error(request: Request, error: DisplayStartError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": str(error)})
+
+
 class DemoRequest(BaseModel):
     demo: int = 0
 
@@ -54,7 +60,7 @@ def display_demo(req: DemoRequest):
         cmd=["./examples-api-use/demo"],
         extra_args=[f"-D{req.demo}"],
     )
-    return {"status": "running", "pid": pid, "demo": req.demo}
+    return {"status": "starting", "pid": pid, "demo": req.demo}
 
 
 @app.post("/display/spotify")
@@ -62,28 +68,19 @@ def display_spotify():
     if not os.environ.get("CLIENT_ID") or not os.environ.get("CLIENT_SECRET"):
         raise HTTPException(status_code=500, detail="CLIENT_ID and CLIENT_SECRET must be set")
 
-    pid = display.start_python(
-        script="server/displays/spotify.py",
-        env={
-            "CLIENT_ID": os.environ["CLIENT_ID"],
-            "CLIENT_SECRET": os.environ["CLIENT_SECRET"],
-        },
-    )
-    return {"status": "running", "pid": pid, "mode": "spotify"}
+    pid = display.start_python(script="server/displays/spotify.py", mode="spotify")
+    return {"status": "starting", "pid": pid, "mode": "spotify"}
 
 
 @app.get("/display/status")
 def display_status():
-    return {
-        "running": display.is_running,
-        "pid": display.current_pid,
-    }
+    return display.status()
 
 
 @app.get("/display/modes")
 def display_modes():
     # Every name here can be POSTed to /display/<name>; "off" comes first
-    return {"animations": ["off", *ANIMATIONS]}
+    return {"animations": ["off", *ANIMATIONS, "spotify"]}
 
 
 # Declared last so the fixed /display/... routes above take precedence
@@ -92,5 +89,5 @@ def display_animation(mode: str):
     script = ANIMATIONS.get(mode)
     if script is None:
         raise HTTPException(status_code=404, detail=f"Unknown mode {mode!r}; see /display/modes")
-    pid = display.start_python(script=f"server/displays/{script}")
-    return {"status": "running", "pid": pid, "mode": mode}
+    pid = display.start_python(script=f"server/displays/{script}", mode=mode)
+    return {"status": "starting", "pid": pid, "mode": mode}

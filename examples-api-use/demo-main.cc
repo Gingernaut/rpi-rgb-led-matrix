@@ -1306,6 +1306,14 @@ int main(int argc, char *argv[]) {
 
   printf("Press <CTRL-C> to exit and reset LEDs\n");
 
+  if (const char *ready = getenv("PIXEL_DISPLAY_READY_FD")) {
+    const int fd = atoi(ready);
+    if (fd >= 3) {
+      if (write(fd, "1", 1) != 1) perror("Display readiness");
+      close(fd);
+    }
+  }
+
   // Now, run our particular demo; it will exit when it sees interrupt_received.
   demo_runner->Run();
 

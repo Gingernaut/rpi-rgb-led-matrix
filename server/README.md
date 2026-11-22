@@ -6,12 +6,14 @@
 
 | Endpoint | Does |
 |---|---|
-| `GET /display/status` | Whether a display is running, and its PID |
-| `GET /display/modes` | `off`, then the display names |
+| `GET /display/status` | Display state, mode, PID if alive, and exit code if it finished |
+| `GET /display/modes` | `off`, the scene names, and `spotify` |
 | `POST /display/<name>` | Start that display, stopping the current one |
 | `POST /display/off` | Stop |
 | `POST /display/demo` | Run `examples-api-use/demo`; body `{"demo": N}` picks which |
 | `POST /display/spotify` | The Spotify display; needs `CLIENT_ID` and `CLIENT_SECRET` in the server's environment |
+
+A start request returns `starting` with the child PID. Poll `GET /display/status` for `running` once the first frame is on the panel or the native demo has initialized. The `running` boolean reports whether the child is alive, including during startup. `failed` and `exited` include the last exit code if a child was started. Use the service journal for errors reported by the child.
 
 ```bash
 curl -s http://<pi>:8000/display/modes
@@ -22,5 +24,6 @@ curl -s -X POST http://<pi>:8000/display/aquarium
 
 - Run `uv` as your user, never with `sudo`: root-owned files break `uv sync`. Use `uv sync --locked`; a plain `uv sync` relocks `uv.lock`, and `git pull` then refuses.
 - Preview or time a display without a panel: `uv run server/displays/preview.py <name> --out x.gif` (`--seconds`, `--seed`, `--bench FRAMES`). Each display's docstring lists its environment variables (`AQUARIUM_EVENT`, `TIDE_FEET`, `ISS_START`, …).
+- Run the off-panel regression checks with `uv run --locked python -m unittest discover -s tests`.
 - After merging upstream, restore `bindings/python/setup.py`, `bindings/python/Makefile` and the root `Makefile` targets: upstream dropped `make build-python` for scikit-build-core, and the fork keeps it.
 - On the Pi this runs as `led-matrix.service`; building, deploying (`hosts/matrix/setup.sh --update`) and the unit are in my dotfiles repo, `setup/infrastructure/RUNBOOK.md`, LED matrix.

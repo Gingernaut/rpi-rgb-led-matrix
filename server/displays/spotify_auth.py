@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import spotipy
+from spotipy.cache_handler import CacheFileHandler
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 
@@ -26,15 +27,28 @@ REDIRECT_URI = "http://127.0.0.1:8888/callback/"
 SCOPE = "user-read-currently-playing user-library-read"
 
 
-def make_auth_manager(client_id: str, client_secret: str) -> SpotifyOAuth:
+class SpotifyLoginRequired(Exception):
+    pass
+
+
+class CachedSpotifyOAuth(SpotifyOAuth):
+    def get_auth_response(self, open_browser: bool | None = None) -> str:
+        raise SpotifyLoginRequired
+
+
+def make_auth_manager(
+    client_id: str, client_secret: str, *, interactive: bool = True,
+) -> SpotifyOAuth:
     """The OAuth setup shared with spotify.py, so the cached token's scope matches."""
-    return SpotifyOAuth(
+    oauth = SpotifyOAuth if interactive else CachedSpotifyOAuth
+    return oauth(
         client_id=client_id,
         client_secret=client_secret,
         redirect_uri=REDIRECT_URI,
         scope=SCOPE,
-        cache_path=str(SPOTIFY_TOKEN_CACHE),
+        cache_handler=CacheFileHandler(cache_path=str(SPOTIFY_TOKEN_CACHE)),
         open_browser=False,
+        requests_timeout=10,
     )
 
 

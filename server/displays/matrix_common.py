@@ -7,6 +7,7 @@ as a sibling module: `from matrix_common import ...`.
 
 import argparse
 import colorsys
+import os
 import signal
 import sys
 from collections.abc import Callable
@@ -76,6 +77,16 @@ def run_display(run: Callable[[], None], cleanup: Callable[[], None] | None = No
             cleanup()
 
 
+def notify_ready() -> None:
+    ready_fd = os.environ.pop("PIXEL_DISPLAY_READY_FD", None)
+    if ready_fd is not None:
+        fd = int(ready_fd)
+        try:
+            os.write(fd, b"1")
+        finally:
+            os.close(fd)
+
+
 # --- Scenes ------------------------------------------------------------------
 #
 # A scene is a class built as Scene(width, height) with a FRAME_SECONDS class
@@ -98,6 +109,9 @@ def run_scene(scene_class, description: str) -> None:
     def run() -> None:
         canvas = matrix.CreateFrameCanvas()
         width, height = matrix.width, matrix.height
+        canvas.SetPixelsRGB(scene.frame(), width, height)
+        canvas = matrix.SwapOnVSync(canvas, refreshes)
+        notify_ready()
         while True:
             canvas.SetPixelsRGB(scene.frame(), width, height)
             canvas = matrix.SwapOnVSync(canvas, refreshes)
