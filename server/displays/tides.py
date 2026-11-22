@@ -45,12 +45,13 @@ TEXT_TOP = 25
 # The chart: HOURS across the graph's width, starting PAST_HOURS before now,
 # and LOW_FEET to HIGH_FEET up its height (fixed, so one day's exchange can
 # be compared with another's)
-HOURS = 48.0
+FUTURE_HOURS = 48.0
 PAST_HOURS = 1.0
+HOURS = PAST_HOURS + FUTURE_HOURS
 LOW_FEET, HIGH_FEET = -3.0, 13.0
 GRAPH_LEFT, GRAPH_RIGHT = MARGIN, WIDTH - MARGIN  # columns
 HOURS_PER_COLUMN = HOURS / (GRAPH_RIGHT - GRAPH_LEFT)
-REDRAW_SECONDS = 30  # the chart is redrawn this often (now moves a column in 48 minutes)
+REDRAW_SECONDS = 30
 
 EVENT_SECONDS = 3.0  # each high and low on the bottom line in turn
 BLINK_SECONDS = 1.0
@@ -110,6 +111,7 @@ class Tides:
                       for name, rows in (("up", UP_ARROW), ("down", DOWN_ARROW))}
         self.chart = None
         self.chart_key = None
+        self.chart_points = None
         self.events: list[tuple[float, float, str, int, int]] = []  # (time, feet, kind, column, row)
         self.predictions = Predictions(STATION)
 
@@ -204,34 +206,44 @@ class Tides:
 
     def frame(self) -> np.ndarray:
         now = time.time()
-        key = (int(now // REDRAW_SECONDS), self.predictions.points[0][:1], len(self.predictions.points[0]))
-        if key != self.chart_key:
+        key = int(now // REDRAW_SECONDS)
+        points = self.predictions.points
+        if key != self.chart_key or points is not self.chart_points:
             self.chart, self.chart_key = self.draw_chart(now), key
+            self.chart_points = points
         frame = self.chart.copy()
         blink = (now % BLINK_SECONDS) < BLINK_SECONDS * 0.6
 
+        end = self.predictions.last_time
         feet = self.predictions.feet(now)
         if feet is None:
-            message = "no tide data"
+            message = "tide expired" if end is not None and now > end else "no tide data"
             self.put(frame, message, (WIDTH - self.text(message).shape[1]) // 2, TEXT_TOP, DIM)
         else:
             # Now: a line down the chart, and a dot where the water is
-            start = now - PAST_HOURS * 3600
             c = GRAPH_LEFT + int(PAST_HOURS / HOURS_PER_COLUMN)
             frame[GRAPH_TOP:GRAPH_BOTTOM, c] = np.maximum(frame[GRAPH_TOP:GRAPH_BOTTOM, c], NOW_LINE)
             r = min(GRAPH_BOTTOM - 1, max(GRAPH_TOP, int(math.floor(self.surface_y(feet)))))
             frame[r, c] = WHITE
             # The tide now, rising or falling, at the top right
             upcoming = self.predictions.events(now, now + 86400)
-            rising = bool(upcoming) and upcoming[0][2] == "H"
             label = f"{feet:.1f}ft"
             x = WIDTH - MARGIN - self.text(label).shape[1]
             self.put(frame, label, x, HEADER_TOP, WHITE)
-            self.put(frame, "up" if rising else "down", x - 4, HEADER_TOP, RISING_COLOR if rising else FALLING_COLOR)
+            next_kind = next((kind for t, _, kind in upcoming if t > now), None)
+            if next_kind is not None:
+                rising = next_kind == "H"
+                self.put(frame, "up" if rising else "down", x - 4, HEADER_TOP, RISING_COLOR if rising else FALLING_COLOR)
             # Each coming high and low in turn, its dot blinking
             ahead = [e for e in self.events if e[0] >= now]
-            if ahead:
-                t, height, kind, ec, er = ahead[int(now / EVENT_SECONDS) % len(ahead)]
+            partial = end is not None and end < now + FUTURE_HOURS * 3600
+            slots = len(ahead) + partial
+            slot = int(now / EVENT_SECONDS) % slots if slots else 0
+            if partial and slot == 0:
+                message = "partial data"
+                self.put(frame, message, (WIDTH - self.text(message).shape[1]) // 2, TEXT_TOP, DIM)
+            elif ahead:
+                t, height, kind, ec, er = ahead[slot - partial]
                 color = self.event_color(kind, height)
                 if not blink:
                     frame[er, ec] = rgb(color) * 0.25

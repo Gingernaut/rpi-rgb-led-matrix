@@ -83,6 +83,7 @@ SKY_FADE_SECONDS = 1.0
 
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"
 TLE_MAX_AGE = 12 * 3600  # CelesTrak updates every few hours and blocks frequent fetches
+TLE_STALE = 3 * 86400
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 FORECAST_MAX_AGE = 3600
 FORECAST_STALE = 24 * 3600  # ignore a cached forecast older than this
@@ -247,6 +248,10 @@ class Orbit:
     def __init__(self, line1: str, line2: str) -> None:
         self.satellite = Satrec.twoline2rv(line1, line2)
         self.lines = (line1, line2)
+        self.epoch = (self.satellite.jdsatepoch - 2440587.5 + self.satellite.jdsatepochF) * 86400
+
+    def is_fresh(self, now: float) -> bool:
+        return abs(now - self.epoch) <= TLE_STALE
 
     def sky(self, t) -> Sky:
         t = np.atleast_1d(np.asarray(t, dtype=np.float64))
@@ -360,10 +365,13 @@ class Forecast:
     cloud: np.ndarray  # total cloud cover, percent
     fetched: float  # when it was fetched (unix time)
 
+    def is_stale(self) -> bool:
+        return time.time() - self.fetched > FORECAST_STALE
+
     def cloud_during(self, start: float, end: float) -> float | None:
         """Average cloud cover over a pass, or None past the forecast or when
         the forecast is too old to trust (fetches have been failing)."""
-        if start < self.times[0] or end > self.times[-1] or time.time() - self.fetched > FORECAST_STALE:
+        if start < self.times[0] or end > self.times[-1] or self.is_stale():
             return None
         t = np.linspace(start, end, 5)
         return float(np.interp(t, self.times, self.cloud).mean())
@@ -373,18 +381,21 @@ def log(message: str) -> None:
     print(f"iss: {message}", file=sys.stderr, flush=True)
 
 
+@dataclass(frozen=True)
+class OrbitPrediction:
+    orbit: Orbit
+    passes: list[Pass]
+    days: int
+    at: float
+
+
 class Feed:
-    """The ISS's orbit, the cloud forecast and the passes they predict, kept
-    fresh by a background thread. Readers just take the attributes: each is
-    replaced whole."""
+    """Publish the orbit and its passes together, with cloud cover updated separately."""
 
     def __init__(self, clock) -> None:
         self.clock = clock
-        self.orbit: Orbit | None = None
+        self.prediction: OrbitPrediction | None = None
         self.forecast: Forecast | None = None
-        self.passes: list[Pass] = []
-        self.predicted_at = -math.inf
-        self.predicted_days = 0
         self.next_fetch = {"tle": 0.0, "forecast": 0.0}
         self.retry = {"tle": FETCH_RETRY, "forecast": FETCH_RETRY}
         self.errors: dict[str, str] = {}
@@ -393,14 +404,15 @@ class Feed:
         # the passes of the next couple of days (a month ahead can take a second
         # or more on the Pi), then the thread looks further and fetches anything
         # missing or stale
-        self.load_cached()
-        self.predict(days=2)
-        self.predicted_at = -math.inf
+        orbit = self.load_cached()
+        if orbit is not None:
+            self.prediction = self.predict(orbit, days=2)
         threading.Thread(target=self.loop, name="iss-feed", daemon=True).start()
 
-    def load_cached(self) -> None:
+    def load_cached(self) -> Orbit | None:
+        orbit = None
         try:
-            self.orbit = parse_tle((CACHE_DIR / "tle.txt").read_text())
+            orbit = parse_tle((CACHE_DIR / "tle.txt").read_text())
         except (OSError, ValueError):
             pass
         try:
@@ -408,6 +420,7 @@ class Feed:
             self.forecast = parse_forecast(json.loads(path.read_text()), path.stat().st_mtime)
         except (OSError, ValueError, KeyError, TypeError):
             pass
+        return orbit
 
     def loop(self) -> None:
         while True:
@@ -418,12 +431,13 @@ class Feed:
             time.sleep(60)
 
     def update(self) -> None:
-        # (abs: also re-predict if the clock jumped back. The Pi has no
-        # real-time clock and may start the scene before it has network time)
-        if abs(self.clock() - self.predicted_at) > PREDICT_EVERY:
-            self.predict()
-        if self.fetch("tle", CACHE_DIR / "tle.txt", TLE_MAX_AGE, self.fetch_tle):
-            self.predict()
+        updated = self.fetch("tle", CACHE_DIR / "tle.txt", TLE_MAX_AGE, self.fetch_tle)
+        prediction = self.prediction
+        # Re-predict on backward clock jumps too, such as when the Pi gets network time.
+        if not updated and prediction is not None and (
+            prediction.days < PREDICT_DAYS or abs(self.clock() - prediction.at) > PREDICT_EVERY
+        ):
+            self.prediction = self.predict(prediction.orbit)
         self.fetch("forecast", CACHE_DIR / "forecast.json", FORECAST_MAX_AGE, self.fetch_forecast)
 
     def fetch(self, name: str, path: Path, max_age: float, fetch) -> bool:
@@ -454,9 +468,9 @@ class Feed:
     def fetch_tle(self, path: Path) -> None:
         r = requests.get(TLE_URL, timeout=15)
         r.raise_for_status()
-        orbit = parse_tle(r.text)
+        prediction = self.predict(parse_tle(r.text))
         path.write_text(r.text)
-        self.orbit = orbit
+        self.prediction = prediction
 
     def fetch_forecast(self, path: Path) -> None:
         r = requests.get(FORECAST_URL, timeout=15, params={
@@ -472,13 +486,11 @@ class Feed:
         path.write_text(r.text)
         self.forecast = forecast
 
-    def predict(self, days: int = PREDICT_DAYS) -> None:
-        if self.orbit is None:
-            return
+    def predict(self, orbit: Orbit, days: int = PREDICT_DAYS) -> OrbitPrediction:
         now = self.clock()
-        self.passes = find_passes(self.orbit, now, days)
-        self.predicted_days = days
-        self.predicted_at = now
+        if not orbit.is_fresh(now):
+            return OrbitPrediction(orbit, [], 0, now)
+        return OrbitPrediction(orbit, find_passes(orbit, now, days), days, now)
 
 
 def parse_tle(text: str) -> Orbit:
@@ -671,12 +683,13 @@ class IssTracker:
         self.home_x, self.home_y = (round(float(v)) for v in map_xy(OBSERVER_LAT, OBSERVER_LON))
         self.track = None
         self.track_time = -math.inf
+        self.track_orbit = None
 
         self.dome = self.draw_dome()
         self.arc: tuple[Pass, Splat, np.ndarray, np.ndarray] | None = None
         self.sky_mix = 0.0
         self.sky_pass: Pass | None = None  # the pass the sky view shows (kept while fading out)
-        self.clouds_for: tuple = (None, None)  # the forecast and pass list self.clouds is for
+        self.clouds_for: tuple = (None, None)
         self.clouds: dict[float, float | None] = {}  # pass start: cloud cover
 
         self.feed = Feed(self.now)
@@ -707,17 +720,20 @@ class IssTracker:
         """The track around now, recomputed every few seconds: its points
         prepared for drawing, their minutes from now, and map x (unwrapped,
         to interpolate the ISS's position between points) and y."""
-        if self.track is None or abs(now - self.track_time) > 5:
+        if orbit is not self.track_orbit or abs(now - self.track_time) > 5:
             minutes = np.arange(-TRAIL_MINUTES * 60, TRACK_MINUTES * 60 + 1, TRACK_STEP) / 60
             sky = orbit.sky(now + minutes * 60)
             ok = ~np.isnan(sky.lat)
             x, y = map_xy(sky.lat[ok], sky.lon[ok])
             self.track = (Splat(x, y, MAP_ROWS, WIDTH, wrap=True), minutes[ok], np.unwrap(x, period=WIDTH), y)
             self.track_time = now
+            self.track_orbit = orbit
         splat, minutes, x, y = self.track
         return splat, minutes - (now - self.track_time) / 60, x, y
 
-    def draw_map(self, now: float, next_pass: Pass | None, cloud: float | None) -> np.ndarray:
+    def draw_map(
+        self, now: float, prediction: OrbitPrediction | None, next_pass: Pass | None, cloud: float | None,
+    ) -> np.ndarray:
         frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
         world = frame[:MAP_ROWS]
         world[:] = self.shaded_map(now)
@@ -727,8 +743,9 @@ class IssTracker:
         soon = (next_pass is not None and next_pass.start - now < SOON_SECONDS and not clouded_out(cloud))
         world += self.ring * (1.6 + 1.2 * math.sin(t * 4) if soon else 1.0)
 
-        orbit = self.feed.orbit
-        track = self.ground_track(orbit, now) if orbit is not None else None
+        track = None
+        if prediction is not None and prediction.orbit.is_fresh(now):
+            track = self.ground_track(prediction.orbit, now)
         if track is not None and len(track[1]) > 1:
             splat, minutes, x, y = track
             past = minutes <= 0
@@ -749,7 +766,13 @@ class IssTracker:
             draw_marker(world, float(np.interp(0, minutes, x)) % WIDTH, float(np.interp(0, minutes, y)),
                         1.0 if lit else BLINK_LOW, rgb(ISS_COLOR))
 
-        self.draw_strip(frame, now, next_pass, cloud)
+        if prediction is None:
+            line = [("NO ISS DATA", GRAY)]
+        elif track is None:
+            line = [("STALE ISS DATA", GRAY)]
+        else:
+            line = self.strip_line(now, next_pass, cloud, prediction.days)
+        frame[STRIP_TOP:STRIP_TOP + self.font.height] += self.line(line, WIDTH)
         return frame
 
     # Text -----------------------------------------------------------------
@@ -805,11 +828,11 @@ class IssTracker:
                 return parts
         return lines[-1]
 
-    def strip_line(self, now: float, next_pass: Pass | None, cloud: float | None) -> list:
-        if self.feed.orbit is None:
-            return [("NO ISS DATA", GRAY)]
+    def strip_line(self, now: float, next_pass: Pass | None, cloud: float | None, days: int) -> list:
+        if days == 0:
+            return [("ISS PREDICTING", GRAY)]
         if next_pass is None:
-            return [(f"NO PASSES {self.feed.predicted_days}D", GRAY)]
+            return [(f"NO PASSES {days}D", GRAY)]
         p = next_pass
         cloudy = clouded_out(cloud)
         icon = (self.cloud_icon, WHITE if cloud is not None else GRAY)
@@ -828,10 +851,6 @@ class IssTracker:
             return self.fit([[(long, WHITE)], [(short, WHITE)]])
         color = GRAY if cloudy else WHITE
         return self.fit([[(long, color)] + weather[0], [(short, color)] + weather[0], [(short, color)] + weather[1]])
-
-    def draw_strip(self, frame: np.ndarray, now: float, next_pass: Pass | None, cloud: float | None) -> None:
-        line = self.strip_line(now, next_pass, cloud)
-        frame[STRIP_TOP:STRIP_TOP + self.font.height] += self.line(line, WIDTH)
 
     # The sky view ---------------------------------------------------------
 
@@ -912,16 +931,20 @@ class IssTracker:
         each forecast and pass list (the feed replaces them whole)."""
         if p is None:
             return None
-        forecast, passes = self.feed.forecast, self.feed.passes
-        if forecast is not self.clouds_for[0] or passes is not self.clouds_for[1]:
-            self.clouds_for, self.clouds = (forecast, passes), {}
+        forecast, prediction = self.feed.forecast, self.feed.prediction
+        if forecast is None or forecast.is_stale():
+            return None
+        if forecast is not self.clouds_for[0] or prediction is not self.clouds_for[1]:
+            self.clouds_for, self.clouds = (forecast, prediction), {}
         if p.start not in self.clouds:
-            self.clouds[p.start] = None if forecast is None else forecast.cloud_during(p.start, p.end)
+            self.clouds[p.start] = forecast.cloud_during(p.start, p.end)
         return self.clouds[p.start]
 
     def frame(self) -> np.ndarray:
         now = self.now()
-        passes = self.feed.passes
+        prediction = self.feed.prediction
+        fresh = prediction is not None and prediction.orbit.is_fresh(now)
+        passes = prediction.passes if fresh else []
         upcoming = next((p for p in passes if p.end >= now), None)
         # A pass about to rise or up now takes over the panel, unless clouded
         # over; once shown, it stays up even if a new forecast clouds it over
@@ -933,11 +956,14 @@ class IssTracker:
         else:
             showing = None
         step = FRAME_SECONDS / SKY_FADE_SECONDS
-        self.sky_mix = min(1.0, self.sky_mix + step) if showing else max(0.0, self.sky_mix - step)
+        if not fresh:
+            self.sky_mix = 0.0
+        else:
+            self.sky_mix = min(1.0, self.sky_mix + step) if showing else max(0.0, self.sky_mix - step)
 
         m = self.sky_mix * self.sky_mix * (3 - 2 * self.sky_mix)
         if m < 1:
-            frame = self.draw_map(now, upcoming, self.cloud(upcoming))
+            frame = self.draw_map(now, prediction, upcoming, self.cloud(upcoming))
         if m > 0:
             sky = self.draw_sky(now, self.sky_pass, self.cloud(self.sky_pass))
             frame = sky if m >= 1 else frame * (1 - m) + sky * m

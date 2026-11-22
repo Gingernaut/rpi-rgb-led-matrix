@@ -19,8 +19,7 @@ import requests
 
 URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 MAX_AGE = 12 * 3600  # refetch twice a day
-DAYS = 4  # of predictions fetched, starting yesterday
-TIDE_DAY = 24.84 * 3600  # a lunar day: the tides come round again about this often
+DAYS = 5  # of predictions fetched, starting yesterday
 FETCH_RETRY = 300
 FETCH_RETRY_MAX = 3600
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "tides"
@@ -44,18 +43,19 @@ class Predictions:
         self.load()
         threading.Thread(target=self.loop, name=f"tides-{station}", daemon=True).start()
 
+    @property
+    def last_time(self) -> float | None:
+        times = self.points[0]
+        return times[-1] if times else None
+
     def feet(self, t: float) -> float | None:
-        """The tide's height (feet above mean lower low water) at t. Past the
-        end of the predictions (NOAA unreachable for days), the same tide a
-        whole number of lunar days earlier; None before any have arrived."""
+        """The tide's height above mean lower low water within the published interval."""
         times, heights, _ = self.points
-        if len(times) < 2:
+        if not times or t < times[0] or t > times[-1]:
             return None
-        if t >= times[-1]:
-            t -= (math.floor((t - times[-1]) / TIDE_DAY) + 1) * TIDE_DAY
+        if t == times[-1]:
+            return heights[-1]
         i = bisect.bisect_right(times, t)
-        if not 0 < i < len(times):
-            return None
         k = (t - times[i - 1]) / (times[i] - times[i - 1])
         return heights[i - 1] + (heights[i] - heights[i - 1]) * (1 - math.cos(math.pi * k)) / 2
 

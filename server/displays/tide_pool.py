@@ -39,6 +39,7 @@ TAU = math.tau
 # --- The tide ----------------------------------------------------------------
 
 TIDE_STATION = "9447130"  # Seattle
+TIDE_DAY = 89_424  # 24.84 hours
 
 # The water's surface (rows down from the top) by tide height in feet: at
 # LOW_FEET and below the pool is cut off and its water rests at the rim;
@@ -62,6 +63,9 @@ class Tide:
     def feet(self, now: float) -> float:
         if self.fixed is not None:
             return self.fixed
+        end = self.predictions.last_time
+        if end is not None and now > end:
+            now = end - (end - now) % TIDE_DAY
         feet = self.predictions.feet(now)
         if feet is None:
             # A semidiurnal stand-in: highs and lows about 12.4 hours apart
