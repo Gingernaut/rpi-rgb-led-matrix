@@ -49,16 +49,19 @@ def main() -> None:
 
     if args.bench:
         times = []
+        cpu_seconds = 0.0
         for _ in range(args.bench):
             start = time.perf_counter()
+            cpu_start = time.thread_time()
             scene.frame()
+            cpu_seconds += time.thread_time() - cpu_start
             times.append(time.perf_counter() - start)
         times.sort()
         mean = sum(times) / len(times)
-        print(f"{args.mode}: {args.bench} frames, mean {mean * 1000:.2f} ms, "
+        print(f"{args.mode}: {args.bench} frames, mean wall {mean * 1000:.2f} ms, "
               f"p99 {times[int(len(times) * 0.99)] * 1000:.2f} ms, "
               f"max {times[-1] * 1000:.2f} ms; budget {period * 1000:.1f} ms "
-              f"({mean / period:.0%} of one core)")
+              f"(mean render CPU {cpu_seconds / (args.bench * period):.1%} of one core)")
         return
 
     from PIL import Image

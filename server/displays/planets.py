@@ -278,7 +278,7 @@ class Planet:
                  light, tilt: float = 0.0, roll: float = 0.0, oblate: float = 1.0,
                  ambient: float = 0.03, limb: float = 0.0, dusty: bool = False, atmosphere=None,
                  rings=None, libration: float = 0.0, seed: int | None = None) -> None:
-        rng = np.random.default_rng(seed)
+        rng = np.random.default_rng(random.getrandbits(64) if seed is None else seed)
         texture, extras = surface(rng)
         self.lights = extras.get("lights") is not None
         if self.lights:
