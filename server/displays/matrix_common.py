@@ -104,7 +104,7 @@ def run_scene(scene_class, description: str) -> None:
     """Entry point for a scene script: show scene_class's frames on the matrix."""
     matrix = create_matrix(parse_matrix_args(description))
     scene = scene_class(matrix.width, matrix.height)
-    refreshes = refreshes_per_frame(scene_class.FRAME_SECONDS)
+    refreshes = refreshes_per_frame(scene.FRAME_SECONDS)
 
     def run() -> None:
         canvas = matrix.CreateFrameCanvas()

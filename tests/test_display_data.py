@@ -2,8 +2,10 @@ import os
 import random
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -179,12 +181,43 @@ class DisplayDataTest(unittest.TestCase):
         def frame():
             random.seed(19)
             np.random.seed(19)
-            scene = planets.Planets(64, 32)
-            scene.show(planets.BODIES[0](64, 32))
+            with patch.object(planets.random, "randrange", return_value=0):
+                scene = planets.Planets(64, 32)
             scene.frames = 80
             return scene.frame()
 
         np.testing.assert_array_equal(frame(), frame())
+
+    def test_planet_frames_continue_while_next_body_is_prepared(self):
+        started = Event()
+        release = Event()
+        first, second = planets.BODIES[:2]
+
+        def prepare(width, height, seed):
+            started.set()
+            if not release.wait(3):
+                raise TimeoutError("the renderer blocked on the planet build")
+            return second(width, height, seed)
+
+        with (
+            ThreadPoolExecutor(max_workers=1) as worker,
+            patch.object(planets, "BODIES", [first, prepare]),
+            patch.object(planets.random, "randrange", return_value=0),
+        ):
+            scene = planets.Planets(64, 32, worker=worker)
+            deadline = round(planets.PLANET_SECONDS / scene.FRAME_SECONDS)
+            scene.frames = deadline - round(planets.FADE_SECONDS / scene.FRAME_SECONDS)
+            try:
+                self.assertEqual(scene.frame().nbytes, 64 * 32 * 3)
+                self.assertTrue(started.wait(3))
+                scene.frames = deadline
+                self.assertEqual(scene.frame().nbytes, 64 * 32 * 3)
+                self.assertEqual(scene.body, 0)
+            finally:
+                release.set()
+            scene.next_planet.result(timeout=3)
+            self.assertEqual(scene.frame().nbytes, 64 * 32 * 3)
+            self.assertEqual(scene.body, 1)
 
 
 if __name__ == "__main__":

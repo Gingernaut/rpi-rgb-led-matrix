@@ -16,6 +16,8 @@ Requires the rgbmatrix Python bindings (make build-python) and numpy.
 import math
 import random
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 
 import numpy as np
 
@@ -25,6 +27,8 @@ FRAME_SECONDS = 2 / REFRESH_HZ  # every 2nd refresh, ~37.5 fps
 
 PLANET_SECONDS = 60.0
 FADE_SECONDS = 1.5
+PLANET_FRAMES = round(PLANET_SECONDS / FRAME_SECONDS)
+PREPARE_FRAME = PLANET_FRAMES - round(2 / FRAME_SECONDS)
 
 # Surfaces are equirectangular textures of cells: columns run east from
 # longitude -180, rows south from latitude 90
@@ -274,11 +278,11 @@ class Planet:
     clockwise. A dusty body (the Moon) is lit evenly out to its limb, as
     airless dusty surfaces are, rather than shading off toward it."""
 
-    def __init__(self, width: int, height: int, surface, *, radius: float, spin_seconds: float,
+    def __init__(self, width: int, height: int, surface, *, seed: int, radius: float, spin_seconds: float,
                  light, tilt: float = 0.0, roll: float = 0.0, oblate: float = 1.0,
                  ambient: float = 0.03, limb: float = 0.0, dusty: bool = False, atmosphere=None,
-                 rings=None, libration: float = 0.0, seed: int | None = None) -> None:
-        rng = np.random.default_rng(random.getrandbits(64) if seed is None else seed)
+                 rings=None, libration: float = 0.0) -> None:
+        rng = np.random.default_rng(seed)
         texture, extras = surface(rng)
         self.lights = extras.get("lights") is not None
         if self.lights:
@@ -289,7 +293,7 @@ class Planet:
         self.clouds = None if clouds is None else running_sums(clouds[..., None])
         self.spin = TEX_W / spin_seconds if spin_seconds else 0.0  # texture columns per second
         self.libration = libration
-        self.phase = random.uniform(0, TEX_W)  # start facing a random longitude
+        self.phase = rng.uniform(0, TEX_W)  # start facing a random longitude
 
         # Every pixel that the planet, its rings or its glow can touch, with
         # SUPERSAMPLE x SUPERSAMPLE sample points each
@@ -439,7 +443,7 @@ class Planet:
             out[self.ring_index] = out[self.ring_index] * self.ring_keep + self.ring_add
 
 
-def moon(width: int, height: int) -> Planet:
+def moon(width: int, height: int, seed: int) -> Planet:
     """The Moon in its current phase: lit from behind it at new moon, from
     the right at first quarter, from the front at full. Earthshine on its
     night side is strongest when it's a crescent, as Earth is then near full
@@ -447,7 +451,7 @@ def moon(width: int, height: int) -> Planet:
     phase = ((time.time() - NEW_MOON_EPOCH) / 86400 / SYNODIC_DAYS) % 1.0
     angle = 2 * math.pi * min(max(phase, MIN_CRESCENT), 1 - MIN_CRESCENT)
     earthshine = 0.03 + 0.1 * (1 + math.cos(angle)) / 2
-    return Planet(width, height, moon_surface, radius=0.44, spin_seconds=0,
+    return Planet(width, height, moon_surface, seed=seed, radius=0.44, spin_seconds=0,
                   light=[math.sin(angle), -0.1, -math.cos(angle)], ambient=earthshine, dusty=True,
                   libration=2.5)
 
@@ -458,24 +462,26 @@ SUN = [-0.75, -0.25, 0.6]  # from the upper left, a little in front
 OUTER_SUN = [-0.5, -0.35, 0.8]
 
 BODIES = [
-    lambda w, h: Planet(w, h, earth_surface, radius=0.44, spin_seconds=50, light=SUN, tilt=0.3,
-                        roll=-0.4, ambient=0.02, atmosphere=(40, 110, 255)),
+    lambda w, h, seed: Planet(w, h, earth_surface, seed=seed, radius=0.44, spin_seconds=50, light=SUN,
+                              tilt=0.3, roll=-0.4, ambient=0.02, atmosphere=(40, 110, 255)),
     moon,
-    lambda w, h: Planet(w, h, mars_surface, radius=0.41, spin_seconds=45, light=SUN, tilt=0.35,
-                        roll=0.3, ambient=0.02, atmosphere=(160, 70, 45)),
-    lambda w, h: Planet(w, h, jupiter_surface, radius=0.45, spin_seconds=28, light=OUTER_SUN, tilt=0.05,
-                        roll=0.05, oblate=0.93, ambient=0.02, limb=0.35),
-    lambda w, h: Planet(w, h, saturn_surface, radius=0.28, spin_seconds=30, light=OUTER_SUN, tilt=0.45,
-                        roll=0.25, oblate=0.9, ambient=0.02, limb=0.3, rings=SATURN_RINGS),
+    lambda w, h, seed: Planet(w, h, mars_surface, seed=seed, radius=0.41, spin_seconds=45, light=SUN,
+                              tilt=0.35, roll=0.3, ambient=0.02, atmosphere=(160, 70, 45)),
+    lambda w, h, seed: Planet(w, h, jupiter_surface, seed=seed, radius=0.45, spin_seconds=28, light=OUTER_SUN,
+                              tilt=0.05, roll=0.05, oblate=0.93, ambient=0.02, limb=0.35),
+    lambda w, h, seed: Planet(w, h, saturn_surface, seed=seed, radius=0.28, spin_seconds=30, light=OUTER_SUN,
+                              tilt=0.45, roll=0.25, oblate=0.9, ambient=0.02, limb=0.3, rings=SATURN_RINGS),
 ]
 
 
 class Planets:
     FRAME_SECONDS = FRAME_SECONDS
 
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, *, worker: ThreadPoolExecutor | None = None) -> None:
         self.width = width
         self.height = height
+        self.worker = worker
+        self.next_planet: Future[Planet] | None = None
         n = width * height
         self.star_index = np.array(random.sample(range(n), min(STAR_COUNT, n)))
         self.star_color = np.array(
@@ -487,7 +493,7 @@ class Planets:
         self.star_phase = np.random.uniform(0, 2 * math.pi, len(self.star_index))
         self.star_visible: np.ndarray | None = None
         self.body = random.randrange(len(BODIES))
-        self.show(BODIES[self.body](width, height))
+        self.show(BODIES[self.body](width, height, random.getrandbits(64)))
         self.total_frames = 0
 
     def show(self, planet: Planet) -> None:
@@ -504,10 +510,19 @@ class Planets:
         self.frames = 0  # frames this planet has been shown
 
     def frame(self) -> np.ndarray:
-        if self.frames >= round(PLANET_SECONDS / FRAME_SECONDS):
-            # Next body, built while only the stars are showing
-            self.body = (self.body + 1) % len(BODIES)
-            self.show(BODIES[self.body](self.width, self.height))
+        next_body = (self.body + 1) % len(BODIES)
+        if self.worker is not None and self.next_planet is None and self.frames >= PREPARE_FRAME:
+            self.next_planet = self.worker.submit(
+                BODIES[next_body], self.width, self.height, random.getrandbits(64),
+            )
+        if self.frames >= PLANET_FRAMES and (self.next_planet is None or self.next_planet.done()):
+            if self.next_planet is None:
+                planet = BODIES[next_body](self.width, self.height, random.getrandbits(64))
+            else:
+                planet = self.next_planet.result()
+            self.body = next_body
+            self.next_planet = None
+            self.show(planet)
         t = self.frames * FRAME_SECONDS
         self.frames += 1
         self.total_frames += 1
@@ -534,7 +549,8 @@ SCENE = Planets
 
 
 def main() -> None:
-    run_scene(Planets, "Planets LED matrix display")
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="planet") as worker:
+        run_scene(partial(Planets, worker=worker), "Planets LED matrix display")
 
 
 if __name__ == "__main__":
