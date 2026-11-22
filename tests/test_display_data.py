@@ -188,6 +188,27 @@ class DisplayDataTest(unittest.TestCase):
 
         np.testing.assert_array_equal(frame(), frame())
 
+    def test_planets_cycle_through_the_four_planets(self):
+        with (
+            patch.object(planets, "Planet", wraps=planets.Planet) as build,
+            patch.object(planets.random, "randrange", return_value=0),
+        ):
+            scene = planets.Planets(64, 32)
+            for _ in range(4):
+                scene.frames = planets.PLANET_FRAMES
+                scene.frame()
+
+        self.assertEqual(
+            [call.args[2] for call in build.call_args_list],
+            [
+                planets.earth_surface,
+                planets.mars_surface,
+                planets.jupiter_surface,
+                planets.saturn_surface,
+                planets.earth_surface,
+            ],
+        )
+
     def test_planet_frames_continue_while_next_body_is_prepared(self):
         started = Event()
         release = Event()

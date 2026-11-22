@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Planets: a slowly rotating planet, lit from one side, against twinkling
-stars. Cycles through Earth (clouds, city lights on the night side), the Moon
-(in its current phase), Mars, Jupiter (Great Red Spot) and Saturn (rings
-passing in front of and behind it, shadows between them), fading each planet
-out and the next in while the stars carry on.
+stars. Cycles through Earth (clouds, city lights on the night side), Mars,
+Jupiter (Great Red Spot) and Saturn (rings passing in front of and behind it,
+shadows between them), fading each planet out and the next in while the stars
+carry on.
 
 Each pixel's spot on the sphere, its lighting and its anti-aliased edge are
 worked out once per planet; a frame then just slides the planet's surface
@@ -15,7 +15,6 @@ Requires the rgbmatrix Python bindings (make build-python) and numpy.
 
 import math
 import random
-import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 
@@ -60,14 +59,6 @@ WORLD = [
     "..##########...####################.",
     "####################################",
 ]
-
-# Synodic month and a known new moon (2000-01-06 18:14 UTC), for the phase
-SYNODIC_DAYS = 29.530588853
-NEW_MOON_EPOCH = 947182440
-# Near new moon the real Moon is lost in the Sun's glare; show at least this
-# much of a month's crescent (about 3 days' worth) instead of a dark disc
-MIN_CRESCENT = 0.1
-
 
 # --- Texture helpers ---------------------------------------------------------
 
@@ -177,26 +168,6 @@ def earth_surface(rng):
     return texture, {"lights": lights, "clouds": clouds}
 
 
-def moon_surface(rng):
-    lat, lon = latitudes(), longitudes()
-    base = mix((150, 150, 145), (185, 185, 180), fbm(rng, base=10))
-    # Dark maria, mostly on the side facing Earth (longitude near 0)
-    near = np.clip(np.cos(np.radians(lon)) * 1.4, 0, 1)
-    maria = np.clip((fbm(rng, base=3) - 0.48) * 6, 0, 1) * near * np.clip(1 - abs(lat) / 70, 0, 1)
-    texture = mix(base, (85, 85, 92), maria * 0.85)
-    # Craters: darker floors, bright rims
-    y, x = np.mgrid[0:TEX_H, 0:TEX_W] + 0.5
-    for _ in range(70):
-        cy, cx, r = rng.uniform(6, TEX_H - 6), rng.uniform(0, TEX_W), rng.uniform(0.8, 3.0)
-        dx = np.minimum(abs(x - cx), TEX_W - abs(x - cx))
-        d = np.hypot(dx, y - cy) / r
-        texture *= np.where(d < 0.8, 0.82, np.where(d < 1.15, 1.18, 1.0))[..., None]
-    # Tycho: a young bright crater in the southern highlands
-    tycho = np.hypot((lon + 11) / 6, (lat + 43) / 4) < 1
-    texture = np.where(tycho[..., None], np.float32(235), texture)
-    return np.clip(texture, 0, 255), {}
-
-
 def mars_surface(rng):
     lat = latitudes()
     # Dark markings, commonest in a band just south of the equator
@@ -275,13 +246,11 @@ class Planet:
     Directions are in screen terms: x right, y down, z toward the viewer.
     radius is a fraction of the panel's height (or half its width, if less).
     tilt tips the north pole toward the viewer, then roll turns the planet
-    clockwise. A dusty body (the Moon) is lit evenly out to its limb, as
-    airless dusty surfaces are, rather than shading off toward it."""
+    clockwise."""
 
     def __init__(self, width: int, height: int, surface, *, seed: int, radius: float, spin_seconds: float,
                  light, tilt: float = 0.0, roll: float = 0.0, oblate: float = 1.0,
-                 ambient: float = 0.03, limb: float = 0.0, dusty: bool = False, atmosphere=None,
-                 rings=None, libration: float = 0.0) -> None:
+                 ambient: float = 0.03, limb: float = 0.0, atmosphere=None, rings=None) -> None:
         rng = np.random.default_rng(seed)
         texture, extras = surface(rng)
         self.lights = extras.get("lights") is not None
@@ -291,8 +260,7 @@ class Planet:
         self.table = running_sums(texture)
         clouds = extras.get("clouds")
         self.clouds = None if clouds is None else running_sums(clouds[..., None])
-        self.spin = TEX_W / spin_seconds if spin_seconds else 0.0  # texture columns per second
-        self.libration = libration
+        self.spin = TEX_W / spin_seconds  # texture columns per second
         self.phase = rng.uniform(0, TEX_W)  # start facing a random longitude
 
         # Every pixel that the planet, its rings or its glow can touch, with
@@ -343,8 +311,6 @@ class Planet:
         # Sunlight at each pixel's center
         xc, yc, zc = x[:, -1], y[:, -1], z[:, -1]
         lit = np.clip(xc * light_r[0] + yc * light_r[1] + zc * light_r[2], 0, 1)
-        if dusty:
-            lit = np.clip(2 * lit / np.maximum(lit + zc, 1e-6), 0, 1)  # Lommel-Seeliger
         sun = lit ** 0.8
 
         # Rings lie in the equatorial plane, seen from `tilt` above it: a ring
@@ -430,7 +396,7 @@ class Planet:
     def draw(self, out: np.ndarray, t: float) -> None:
         """Add the planet (and front rings) at time t seconds to out, a flat
         (pixels, 3) float32 frame already holding the background."""
-        turn = self.phase + self.spin * t + self.libration * math.sin(t * 2 * math.pi / 30)
+        turn = self.phase + self.spin * t
         texel = self.sample(self.table, turn)
         color = texel[:, :3] * self.weight
         if self.lights:
@@ -443,19 +409,6 @@ class Planet:
             out[self.ring_index] = out[self.ring_index] * self.ring_keep + self.ring_add
 
 
-def moon(width: int, height: int, seed: int) -> Planet:
-    """The Moon in its current phase: lit from behind it at new moon, from
-    the right at first quarter, from the front at full. Earthshine on its
-    night side is strongest when it's a crescent, as Earth is then near full
-    seen from the Moon."""
-    phase = ((time.time() - NEW_MOON_EPOCH) / 86400 / SYNODIC_DAYS) % 1.0
-    angle = 2 * math.pi * min(max(phase, MIN_CRESCENT), 1 - MIN_CRESCENT)
-    earthshine = 0.03 + 0.1 * (1 + math.cos(angle)) / 2
-    return Planet(width, height, moon_surface, seed=seed, radius=0.44, spin_seconds=0,
-                  light=[math.sin(angle), -0.1, -math.cos(angle)], ambient=earthshine, dusty=True,
-                  libration=2.5)
-
-
 SUN = [-0.75, -0.25, 0.6]  # from the upper left, a little in front
 # Seen from Earth the outer planets are lit nearly from the front; a little
 # off it, Saturn's shadow shows as a notch in the rings behind it
@@ -464,7 +417,6 @@ OUTER_SUN = [-0.5, -0.35, 0.8]
 BODIES = [
     lambda w, h, seed: Planet(w, h, earth_surface, seed=seed, radius=0.44, spin_seconds=50, light=SUN,
                               tilt=0.3, roll=-0.4, ambient=0.02, atmosphere=(40, 110, 255)),
-    moon,
     lambda w, h, seed: Planet(w, h, mars_surface, seed=seed, radius=0.41, spin_seconds=45, light=SUN,
                               tilt=0.35, roll=0.3, ambient=0.02, atmosphere=(160, 70, 45)),
     lambda w, h, seed: Planet(w, h, jupiter_surface, seed=seed, radius=0.45, spin_seconds=28, light=OUTER_SUN,
