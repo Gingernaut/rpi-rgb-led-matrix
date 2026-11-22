@@ -27,6 +27,7 @@ ANIMATIONS = {
     "tides": "tides.py",
     "koi-pond": "koi_pond.py",
     "tide-pool": "tide_pool.py",
+    "forest": "forest.py",
 }
 
 
